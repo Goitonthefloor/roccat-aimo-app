@@ -3,16 +3,29 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="Userspace bridge for Roccat Kone AIMO / Vulcan AIMO on Linux"
 arch=('any')
-url="https://github.com/roccat-linux/roccat-aimo-app"
+url="https://github.com/Goitonthefloor/roccat-aimo-app"
 license=('MIT')
 depends=('python' 'python-hidapi')
-makedepends=()
-optdepends=()
-source=()
-sha256sums=()
+makedepends=('git')
+optdepends=(
+  'python-gobject: optional GUI helpers'
+  'gtk3: optional GUI helpers'
+)
+source=("${pkgname}::git+${url}.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "${pkgname}"
+  printf "0.1.0"
+}
 
 package() {
-  install -Dm755 "$srcdir/../src/roccat_aimo_bridge.py" "$pkgdir/usr/bin/roccat-aimo-cli"
-  install -Dm644 "$srcdir/../src/roccat-aimo-bridge.service" "$pkgdir/usr/lib/systemd/user/roccat-aimo-bridge.service"
-  install -Dm644 "$srcdir/../etc/systemd/user/roccat-aimo-service.service" "$pkgdir/usr/lib/systemd/user/roccat-aimo-service.service"
+  cd "${pkgname}"
+  install -Dm755 src/roccat_aimo_bridge.py "${pkgdir}/usr/bin/roccat-aimo-cli"
+  install -Dm644 src/roccat-aimo-bridge.service "${pkgdir}/usr/lib/systemd/user/roccat-aimo-bridge.service"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  if [ -f icons/roccat-aimo.svg ]; then
+    install -Dm644 icons/roccat-aimo.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/roccat-aimo.svg"
+  fi
 }

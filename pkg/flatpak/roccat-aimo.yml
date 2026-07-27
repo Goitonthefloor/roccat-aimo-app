@@ -1,0 +1,18 @@
+app-id: io.github.Goitonthefloor.roccat.aimo
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: roccat-aimo-cli
+permissions: devices
+
+modules:
+  - name: roccat-aimo-app
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 src/roccat_aimo_bridge.py /app/bin/roccat-aimo-cli
+      - install -Dm644 src/roccat-aimo-bridge.service /app/share/systemd/user/roccat-aimo-bridge.service
+      - install -Dm644 README.md /app/share/doc/roccat-aimo-app/README.md
+      - install -Dm644 LICENSE /app/share/licenses/roccat-aimo-app/LICENSE
+    sources:
+      - type: dir
+        path: .
