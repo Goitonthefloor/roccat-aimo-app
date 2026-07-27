@@ -1,0 +1,14 @@
+[Unit]
+Description=Roccat AIMO userspace bridge (Kone AIMO / Vulcan AIMO)
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/roccat-aimo-bridge
+Restart=on-failure
+RestartSec=5
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=%h/.Xauthority
+
+[Install]
+WantedBy=default.target

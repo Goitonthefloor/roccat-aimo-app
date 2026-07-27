@@ -1,0 +1,18 @@
+pkgname=roccat-aimo-app
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Userspace bridge for Roccat Kone AIMO / Vulcan AIMO on Linux"
+arch=('any')
+url="https://github.com/roccat-linux/roccat-aimo-app"
+license=('MIT')
+depends=('python' 'python-hidapi')
+makedepends=()
+optdepends=()
+source=()
+sha256sums=()
+
+package() {
+  install -Dm755 "$srcdir/../src/roccat_aimo_bridge.py" "$pkgdir/usr/bin/roccat-aimo-cli"
+  install -Dm644 "$srcdir/../src/roccat-aimo-bridge.service" "$pkgdir/usr/lib/systemd/user/roccat-aimo-bridge.service"
+  install -Dm644 "$srcdir/../etc/systemd/user/roccat-aimo-service.service" "$pkgdir/usr/lib/systemd/user/roccat-aimo-service.service"
+}
