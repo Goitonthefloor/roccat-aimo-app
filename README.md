@@ -51,11 +51,11 @@ flatpak install repo io.github.Goitonthefloor.roccat.aimo
 
 ```bash
 git clone https://github.com/Goitonthefloor/roccat-aimo-app.git
-cd roccat-aimo-app
+cd roccat-aimo-app/pkg/arch
 makepkg -si
 ```
 
-Or manual:
+Oder manuell:
 ```bash
 pip install --user hidapi PyGObject
 cp src/roccat_aimo_bridge.py ~/.local/bin/roccat-aimo-cli
