@@ -210,6 +210,8 @@ class RoccatGui(Adw.ApplicationWindow):
 class RoccatApp(Adw.Application):
     def __init__(self):
         super().__init__(application_id="io.github.Goitonthefloor.roccat.aimo")
+        style_manager = Adw.StyleManager.get_default()
+        style_manager.set_color_scheme(Adw.ColorScheme.PREFER_DARK)
 
     def do_activate(self, gui=None):
         if gui is None:

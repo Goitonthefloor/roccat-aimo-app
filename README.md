@@ -32,11 +32,12 @@ cd roccat-aimo-app
 bash scripts/setup-bazzite.sh
 flatpak-builder --force-clean build-dir pkg/flatpak/roccat-aimo.yml
 flatpak remote-add --no-gpg-verify local-roccat repo
-flatpak make-local repo build-dir/io.github.Goitonthefloor.roccat.aimo.flatpak
 flatpak install local-roccat io.github.Goitonthefloor.roccat.aimo
 ```
 
 > Hinweis: `scripts/setup-bazzite.sh` prüft ob `flatpak` und `flatpak-builder` vorhanden sind und installiert sie unter Bazzite via `rpm-ostree install` nach. Danach ist ein Reboot nötig, bevor `flatpak-builder` zur Verfügung steht.
+> Falls `flatpak install local-roccat ...` fehlschlägt, weil das Repo unvollständig ist, installiere die erstellte `.flatpak`-Datei direkt:
+> `flatpak install --bundle build-dir/io.github.Goitonthefloor.roccat.aimo.flatpak`
 
 ### Arch Linux
 
