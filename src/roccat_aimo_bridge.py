@@ -236,6 +236,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def handle_gui() -> int:
+    candidates = [
+        Path.home() / ".local" / "lib" / "roccat-aimo-app",
+        Path("/usr/lib/roccat-aimo-app"),
+        Path("/usr/local/lib/roccat-aimo-app"),
+    ]
+    for parent in candidates:
+        mod = parent / "roccat_aimo_gui.py"
+        if mod.exists():
+            sys.path.insert(0, str(parent))
+            break
     try:
         from roccat_aimo_gui import main as gui_main
     except ImportError as exc:
