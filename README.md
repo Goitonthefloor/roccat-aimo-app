@@ -19,27 +19,21 @@ Userspace bridge for **Roccat Kone AIMO** and **Vulcan AIMO** on Linux.
 
 ### Flatpak (empfohlen, inkl. Bazzite)
 
-Binary Flatpak (wenn verfügbar):
-```bash
-flatpak install io.github.Goitonthefloor.roccat.aimo
-flatpak run io.github.Goitonthefloor.roccat.aimo
-```
-
 Lokal bauen (Bazzite / Flatpak 1.18):
 ```bash
-# 1) Clone
-git clone https://github.com/Goitonthefloor/roccat-aimo-app.git
+git clone https://github.com/Goitonthefloor/roccat-aimo-app.git temp
+mv temp/.git roccat-aimo-app/.git
+rm -rf temp
 cd roccat-aimo-app
 
-# 2) Voraussetzungen installieren
 bash scripts/setup-bazzite.sh
 # Reboot falls rpm-ostree Pakete gelayert wurden
 
-# 3) Alte fehlgeschlagene Build-Artefakte bereinigen
+# Alte fehlgeschlagene Build-Artefakte bereinigen
 rm -rf build-dir repo io.github.Goitonthefloor.roccat.aimo.flatpak
 flatpak remote-delete local-roccat || true
 
-# 4) Flatpak bauen + direkt installieren (ohne separates Repo)
+# Flatpak bauen + direkt installieren (ohne separates Repo)
 flatpak-builder --force-clean --repo=repo build-dir pkg/flatpak/roccat-aimo.yml
 flatpak install repo io.github.Goitonthefloor.roccat.aimo
 ```
@@ -50,7 +44,13 @@ flatpak install repo io.github.Goitonthefloor.roccat.aimo
 ### Arch Linux
 
 ```bash
-git clone https://github.com/Goitonthefloor/roccat-aimo-app.git
+git clone https://github.com/Goitonthefloor/roccat-aimo-app.git temp-roccat
+if [ -d roccat-aimo-app ]; then
+  mv temp-roccat/.git roccat-aimo-app/.git
+  rm -rf temp-roccat
+else
+  mv temp-roccat roccat-aimo-app
+fi
 cd roccat-aimo-app/pkg/arch
 makepkg -si
 ```
