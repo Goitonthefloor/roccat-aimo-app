@@ -49,9 +49,13 @@ makepkg -si
 
 Or manual:
 ```bash
-pip install --user hidapi
+pip install --user hidapi PyGObject
 cp src/roccat_aimo_bridge.py ~/.local/bin/roccat-aimo-cli
 chmod +x ~/.local/bin/roccat-aimo-cli
+mkdir -p ~/.local/lib/roccat-aimo-app
+cp src/roccat_aimo_gui.py ~/.local/lib/roccat-aimo-app/roccat_aimo_gui.py
+mkdir -p ~/.local/share/applications
+cp src/roccat-aimo.desktop ~/.local/share/applications/roccat-aimo.desktop
 systemctl --user enable --now roccat-aimo-bridge.service
 ```
 

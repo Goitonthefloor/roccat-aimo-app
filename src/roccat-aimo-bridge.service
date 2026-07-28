@@ -4,7 +4,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/roccat-aimo-bridge
+ExecStart=/usr/bin/roccat-aimo-cli bridge
 Restart=on-failure
 RestartSec=5
 Environment=DISPLAY=:0

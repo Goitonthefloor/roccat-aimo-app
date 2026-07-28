@@ -132,6 +132,15 @@ def handle_list(_: argparse.Namespace) -> int:
     return 0
 
 
+def handle_bridge(_: argparse.Namespace) -> int:
+    try:
+        while True:
+            list_roccat_devices()
+            time.sleep(1)
+    except KeyboardInterrupt:
+        return 0
+
+
 def _pick_device(index: int) -> Dict[str, Any]:
     devices = list_roccat_devices()
     if not devices:
@@ -217,18 +226,13 @@ def build_parser() -> argparse.ArgumentParser:
     poll_p.add_argument("--index", type=int, default=0)
     poll_p.set_defaults(func=handle_poll)
 
+    gui_p = sub.add_parser("gui", help="Open GTK4 GUI")
+    gui_p.set_defaults(func=lambda _: handle_gui())
+
+    bridge_p = sub.add_parser("bridge", help="Run userspace bridge/daemon")
+    bridge_p.set_defaults(func=handle_bridge)
+
     return parser
-
-
-def main() -> int:
-    parser = build_parser()
-    args = parser.parse_args()
-    if args.command == "gui":
-        return handle_gui()
-    if not args.command:
-        parser.print_help()
-        return 0
-    return args.func(args)
 
 
 def handle_gui() -> int:
@@ -238,6 +242,15 @@ def handle_gui() -> int:
         print(f"GUI dependencies missing: {exc}", file=sys.stderr)
         return 1
     return gui_main()
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        return 0
+    return args.func(args)
 
 
 if __name__ == "__main__":
