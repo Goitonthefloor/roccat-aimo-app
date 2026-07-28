@@ -29,15 +29,14 @@ Lokal bauen:
 ```bash
 git clone https://github.com/Goitonthefloor/roccat-aimo-app.git
 cd roccat-aimo-app
+bash scripts/setup-bazzite.sh
 flatpak-builder --force-clean build-dir pkg/flatpak/roccat-aimo.yml
 flatpak remote-add --no-gpg-verify local-roccat repo
 flatpak make-local repo build-dir/io.github.Goitonthefloor.roccat.aimo.flatpak
 flatpak install local-roccat io.github.Goitonthefloor.roccat.aimo
 ```
 
-> Hinweis: `flatpak-builder` muss ggf. erst installiert werden. Auf Bazzite reicht das Flatpak Builder-Modul.
-> `flatpak make-local` erwartet eine existierende lokale `.flatpak`-Datei aus `build-dir/`, keine Remote-URL.
-> Ein Signing-Schritt ist hier nicht nötig.
+> Hinweis: `scripts/setup-bazzite.sh` prüft ob `flatpak` und `flatpak-builder` vorhanden sind und installiert sie unter Bazzite via `rpm-ostree install` nach. Danach ist ein Reboot nötig, bevor `flatpak-builder` zur Verfügung steht.
 
 ### Arch Linux
 
