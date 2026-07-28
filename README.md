@@ -17,6 +17,28 @@ Userspace bridge for **Roccat Kone AIMO** and **Vulcan AIMO** on Linux.
 
 ## Install
 
+### Flatpak (empfohlen, inkl. Bazzite)
+
+Binary Flatpak (wenn verfügbar):
+```bash
+flatpak install io.github.Goitonthefloor.roccat.aimo
+flatpak run io.github.Goitonthefloor.roccat.aimo
+```
+
+Lokal bauen:
+```bash
+git clone https://github.com/Goitonthefloor/roccat-aimo-app.git
+cd roccat-aimo-app
+flatpak-builder --force-clean build-dir pkg/flatpak/roccat-aimo.yml
+flatpak remote-add --no-gpg-verify local-roccat repo
+flatpak make-local repo build-dir/io.github.Goitonthefloor.roccat.aimo.flatpak
+flatpak install local-roccat io.github.Goitonthefloor.roccat.aimo
+```
+
+> Hinweis: `flatpak-builder` muss ggf. erst installiert werden. Auf Bazzite reicht das Flatpak Builder-Modul.
+> `flatpak make-local` erwartet eine existierende lokale `.flatpak`-Datei aus `build-dir/`, keine Remote-URL.
+> Ein Signing-Schritt ist hier nicht nötig.
+
 ### Arch Linux
 
 ```bash
@@ -26,7 +48,6 @@ makepkg -si
 ```
 
 Or manual:
-
 ```bash
 pip install --user hidapi
 cp src/roccat_aimo_bridge.py ~/.local/bin/roccat-aimo-cli
@@ -34,27 +55,10 @@ chmod +x ~/.local/bin/roccat-aimo-cli
 systemctl --user enable --now roccat-aimo-bridge.service
 ```
 
-### Flatpak
+### Bazzite-Hinweis
 
-```bash
-flatpak install io.github.Goitonthefloor.roccat.aimo
-flatpak run io.github.Goitonthefloor.roccat.aimo
-```
-
-Or build locally:
-
-```bash
-flatpak-builder --force-clean build-dir pkg/flatpak/roccat-aimo.yml
-flatpak remote-add --no-gpg-verify local-roccat repo
-flatpak make-local repo build-dir/io.github.Goitonthefloor.roccat.aimo.flatpak
-flatpak install local-roccat io.github.Goitonthefloor.roccat.aimo
-```
-
-### Bazzite
-
-- Flatpak-Variante ist für Bazzite empfohlen.
-- GUI über Flatpak sollte sowohl im Desktop als auch unter Gamescope starten.
-- Falls du das systemd-User-Service verwenden willst, aktiviere es über den Terminal-Mode oder user-session.
+- Flatpak ist bevorzugt, weil Bazzite kein normales systemd-user-Session im Desktop/Gamescope bereitstellt.
+- Falls du das systemd-user-Service trotzdem nutzen willst, aktiviere es im Terminal-Mode oder in einer `user-session`.
 
 ## Usage
 

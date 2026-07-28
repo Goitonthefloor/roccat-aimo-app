@@ -223,10 +223,21 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    if args.command == "gui":
+        return handle_gui()
     if not args.command:
         parser.print_help()
         return 0
     return args.func(args)
+
+
+def handle_gui() -> int:
+    try:
+        from roccat_aimo_gui import main as gui_main
+    except ImportError as exc:
+        print(f"GUI dependencies missing: {exc}", file=sys.stderr)
+        return 1
+    return gui_main()
 
 
 if __name__ == "__main__":
