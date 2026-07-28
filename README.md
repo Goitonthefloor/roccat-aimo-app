@@ -25,19 +25,26 @@ flatpak install io.github.Goitonthefloor.roccat.aimo
 flatpak run io.github.Goitonthefloor.roccat.aimo
 ```
 
-Lokal bauen:
+Lokal bauen (Bazzite / Flatpak 1.18):
 ```bash
+# 1) Voraussetzungen installieren
+bash scripts/setup-bazzite.sh
+# Reboot falls rpm-ostree Pakete gelayert wurden
+
+# 2) Clone
 git clone https://github.com/Goitonthefloor/roccat-aimo-app.git
 cd roccat-aimo-app
-bash scripts/setup-bazzite.sh
-flatpak-builder --force-clean build-dir pkg/flatpak/roccat-aimo.yml
-flatpak remote-add --no-gpg-verify local-roccat repo
-flatpak install local-roccat io.github.Goitonthefloor.roccat.aimo
+
+# 3) Alte fehlgeschlagene Build-Artefakte bereinigen
+rm -rf build-dir repo local-roccat*.flatpak
+
+# 4) Flatpak bauen + direkt installieren (ohne separates Repo)
+flatpak-builder --force-clean --repo=repo build-dir pkg/flatpak/roccat-aimo.yml
+flatpak install repo io.github.Goitonthefloor.roccat.aimo
 ```
 
 > Hinweis: `scripts/setup-bazzite.sh` prüft ob `flatpak` und `flatpak-builder` vorhanden sind und installiert sie unter Bazzite via `rpm-ostree install` nach. Danach ist ein Reboot nötig, bevor `flatpak-builder` zur Verfügung steht.
-> Falls `flatpak install local-roccat ...` fehlschlägt, weil das Repo unvollständig ist, installiere die erstellte `.flatpak`-Datei direkt:
-> `flatpak install --bundle build-dir/io.github.Goitonthefloor.roccat.aimo.flatpak`
+> `flatpak install lokal-roccat ...` und `flatpak make-local` werden hier bewusst nicht verwendet, weil sie auf Flatpak 1.18 + unvollständigem lokalen Repo fehlschlagen.
 
 ### Arch Linux
 
