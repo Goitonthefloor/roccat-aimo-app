@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Roccat AIMO
+Comment=Userspace bridge for Roccat Kone AIMO and Vulcan AIMO
+Exec=roccat-aimo-cli gui
+Icon=roccat-aimo
+Terminal=false
+Categories=Utility;HardwareSettings;
