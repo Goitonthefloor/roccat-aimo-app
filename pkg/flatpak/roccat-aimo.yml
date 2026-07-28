@@ -3,7 +3,11 @@ runtime: org.freedesktop.Platform
 runtime-version: '23.08'
 sdk: org.freedesktop.Sdk
 command: roccat-aimo-cli
-permissions: devices
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=all
 
 modules:
   - name: roccat-aimo-app
