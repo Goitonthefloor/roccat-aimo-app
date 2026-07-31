@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """Roccat AIMO GTK4 GUI."""
 
-import json
 import subprocess
 import sys
-import threading
+
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, GLib
+from gi.repository import Gtk, Adw  # noqa: E402
 
 
 class RoccatDeviceRow(Adw.ActionRow):
@@ -18,9 +17,14 @@ class RoccatDeviceRow(Adw.ActionRow):
         self.device = device
         self.index = index
         self.on_select = on_select
-        prod = device.get("product_string") or f"Unknown 0x{device.get('product_id',0):04x}"
+        prod = (
+            device.get("product_string")
+            or f"Unknown 0x{device.get('product_id', 0):04x}"
+        )
         self.set_title(prod)
-        self.set_subtitle(f"vendor 0x{device.get('vendor_id',0):04x} product 0x{device.get('product_id',0):04x}")
+        self.set_subtitle(
+            f"vendor 0x{device.get('vendor_id', 0):04x} product 0x{device.get('product_id', 0):04x}"
+        )
         btn = Gtk.Button(label="Select")
         btn.add_css_class("flat")
         btn.connect("clicked", lambda _: on_select(self))
@@ -40,7 +44,14 @@ class RoccatGui(Adw.ApplicationWindow):
 
         # Sidebar
         sidebar = Adw.NavigationPage(title="Devices")
-        sb_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        sb_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=6,
+            margin_top=12,
+            margin_bottom=12,
+            margin_start=12,
+            margin_end=12,
+        )
         self.devices_store = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.devices_store.add_css_class("boxed-list")
         refresh_btn = Gtk.Button(label="Refresh")
@@ -52,7 +63,14 @@ class RoccatGui(Adw.ApplicationWindow):
 
         # Main content
         main_page = Adw.NavigationPage(title="Device Control")
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        main_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            margin_top=12,
+            margin_bottom=12,
+            margin_start=12,
+            margin_end=12,
+        )
         self.status_label = Gtk.Label(label="No device selected")
         self.status_label.set_halign(Gtk.Align.START)
 
@@ -81,11 +99,14 @@ class RoccatGui(Adw.ApplicationWindow):
         self.rgb_col.set_range(0, 20)
         self.rgb_col.set_value(0)
         self.r = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
-        self.r.set_range(0, 255); self.r.set_value(0)
+        self.r.set_range(0, 255)
+        self.r.set_value(0)
         self.g = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
-        self.g.set_range(0, 255); self.g.set_value(0)
+        self.g.set_range(0, 255)
+        self.g.set_value(0)
         self.b = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
-        self.b.set_range(0, 255); self.b.set_value(0)
+        self.b.set_range(0, 255)
+        self.b.set_value(0)
         rgb_btn = Gtk.Button(label="Apply RGB")
         rgb_btn.connect("clicked", lambda _: self.apply_rgb())
 
@@ -121,11 +142,21 @@ class RoccatGui(Adw.ApplicationWindow):
 
         rgb_group = Adw.PreferencesGroup.new()
         rgb_group.set_title("RGB")
-        row = Adw.ActionRow(title="Row"); row.add_suffix(self.rgb_row); rgb_group.add(row)
-        row = Adw.ActionRow(title="Col"); row.add_suffix(self.rgb_col); rgb_group.add(row)
-        row = Adw.ActionRow(title="Red"); row.add_suffix(self.r); rgb_group.add(row)
-        row = Adw.ActionRow(title="Green"); row.add_suffix(self.g); rgb_group.add(row)
-        row = Adw.ActionRow(title="Blue"); row.add_suffix(self.b); rgb_group.add(row)
+        row = Adw.ActionRow(title="Row")
+        row.add_suffix(self.rgb_row)
+        rgb_group.add(row)
+        row = Adw.ActionRow(title="Col")
+        row.add_suffix(self.rgb_col)
+        rgb_group.add(row)
+        row = Adw.ActionRow(title="Red")
+        row.add_suffix(self.r)
+        rgb_group.add(row)
+        row = Adw.ActionRow(title="Green")
+        row.add_suffix(self.g)
+        rgb_group.add(row)
+        row = Adw.ActionRow(title="Blue")
+        row.add_suffix(self.b)
+        rgb_group.add(row)
         rgb_group.add(Adw.PreferencesRow.new())
         rgb_group.get_child_last().set_child(rgb_btn)
         main_box.append(rgb_group)
@@ -137,12 +168,6 @@ class RoccatGui(Adw.ApplicationWindow):
     def load_devices(self):
         self.devices_store.remove_all()
         try:
-            out = subprocess.check_output(["roccat-aimo-cli", "list"], text=True)
-        except Exception as exc:
-            self._append_device_row({"product_string": str(exc)}, 0)
-            return
-        # Keep parsing simple
-        try:
             payload = subprocess.check_output(["roccat-aimo-cli", "list"], text=True)
         except Exception as exc:
             self._append_device_row({"product_string": f"ERROR: {exc}"}, 0)
@@ -150,7 +175,12 @@ class RoccatGui(Adw.ApplicationWindow):
         devices = []
         current = {}
         for line in payload.splitlines():
-            if line.startswith("1. ") or line.startswith("2. ") or line.startswith("3. ") or line.startswith("0. "):
+            if (
+                line.startswith("1. ")
+                or line.startswith("2. ")
+                or line.startswith("3. ")
+                or line.startswith("0. ")
+            ):
                 if current:
                     devices.append(current)
                 current = {"title": line.split(" ", 1)[1]}
@@ -174,13 +204,25 @@ class RoccatGui(Adw.ApplicationWindow):
 
     def select_device(self, row):
         self.selected_index = row.index
-        self.status_label.set_label(f"Selected: {row.device.get('product_string') or row.device.get('title')}")
+        self.status_label.set_label(
+            f"Selected: {row.device.get('product_string') or row.device.get('title')}"
+        )
 
     def apply_dpi(self):
         x = int(self.dpi_x.get_value())
         y = int(self.dpi_y.get_value())
         try:
-            subprocess.check_output(["roccat-aimo-cli", "dpi", str(x), str(y), "--index", str(self.selected_index)], text=True)
+            subprocess.check_output(
+                [
+                    "roccat-aimo-cli",
+                    "dpi",
+                    str(x),
+                    str(y),
+                    "--index",
+                    str(self.selected_index),
+                ],
+                text=True,
+            )
             self.status_label.set_label(f"DPI applied: {x}/{y}")
         except Exception as exc:
             self.status_label.set_label(f"DPI error: {exc}")
@@ -189,7 +231,18 @@ class RoccatGui(Adw.ApplicationWindow):
         on = 1 if self.led_switch.get_active() else 0
         brightness = int(self.brightness.get_value())
         try:
-            subprocess.check_output(["roccat-aimo-cli", "led", str(on), "--brightness", str(brightness), "--index", str(self.selected_index)], text=True)
+            subprocess.check_output(
+                [
+                    "roccat-aimo-cli",
+                    "led",
+                    str(on),
+                    "--brightness",
+                    str(brightness),
+                    "--index",
+                    str(self.selected_index),
+                ],
+                text=True,
+            )
             self.status_label.set_label(f"LED applied: on={on} brightness={brightness}")
         except Exception as exc:
             self.status_label.set_label(f"LED error: {exc}")
@@ -201,7 +254,20 @@ class RoccatGui(Adw.ApplicationWindow):
         g = int(self.g.get_value())
         b = int(self.b.get_value())
         try:
-            subprocess.check_output(["roccat-aimo-cli", "rgb", str(row), str(col), str(r), str(g), str(b), "--index", str(self.selected_index)], text=True)
+            subprocess.check_output(
+                [
+                    "roccat-aimo-cli",
+                    "rgb",
+                    str(row),
+                    str(col),
+                    str(r),
+                    str(g),
+                    str(b),
+                    "--index",
+                    str(self.selected_index),
+                ],
+                text=True,
+            )
             self.status_label.set_label(f"RGB applied: ({row},{col}) = {r},{g},{b}")
         except Exception as exc:
             self.status_label.set_label(f"RGB error: {exc}")

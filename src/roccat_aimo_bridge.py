@@ -3,7 +3,6 @@
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -46,15 +45,17 @@ def list_roccat_devices() -> List[Dict[str, Any]]:
     devices = []
     for d in hid.enumerate():
         if d.get("vendor_id") == ROCCAT_VID:
-            devices.append({
-                "vendor_id": d.get("vendor_id"),
-                "product_id": d.get("product_id"),
-                "path": d.get("path"),
-                "product_string": d.get("product_string"),
-                "manufacturer_string": d.get("manufacturer_string"),
-                "release_number": d.get("release_number"),
-                "interface_number": d.get("interface_number"),
-            })
+            devices.append(
+                {
+                    "vendor_id": d.get("vendor_id"),
+                    "product_id": d.get("product_id"),
+                    "path": d.get("path"),
+                    "product_string": d.get("product_string"),
+                    "manufacturer_string": d.get("manufacturer_string"),
+                    "release_number": d.get("release_number"),
+                    "interface_number": d.get("interface_number"),
+                }
+            )
     return devices
 
 
@@ -75,12 +76,16 @@ def send_hid_report(dev: hid.device, report_id: int, data: bytes) -> None:
 def set_kone_aimo_dpi(dev: hid.device, x: int, y: int) -> None:
     x = max(100, min(16000, int(x)))
     y = max(100, min(16000, int(y)))
-    data = bytes([
-        0x03,
-        0x04,
-        (x >> 8) & 0xFF, x & 0xFF,
-        (y >> 8) & 0xFF, y & 0xFF,
-    ])
+    data = bytes(
+        [
+            0x03,
+            0x04,
+            (x >> 8) & 0xFF,
+            x & 0xFF,
+            (y >> 8) & 0xFF,
+            y & 0xFF,
+        ]
+    )
     send_hid_report(dev, 0x04, data)
 
 
@@ -91,7 +96,9 @@ def set_kone_aimo_led(dev: hid.device, enabled: bool, brightness: int = 255) -> 
     send_hid_report(dev, 0x04, data)
 
 
-def set_vulcan_key_rgb(dev: hid.device, row: int, col: int, r: int, g: int, b: int) -> None:
+def set_vulcan_key_rgb(
+    dev: hid.device, row: int, col: int, r: int, g: int, b: int
+) -> None:
     row = max(0, min(5, int(row)))
     col = max(0, min(20, int(col)))
     r = max(0, min(255, int(r)))
@@ -119,12 +126,16 @@ def handle_list(_: argparse.Namespace) -> int:
         return 1
     print(f"Found {len(devices)} Roccat device(s):")
     for idx, dev in enumerate(devices, 1):
-        prod = next((p for p in PRODUCTS if p["product"] == dev.get("product_id")), None)
-        name = prod["name"] if prod else f"Unknown 0x{dev.get('product_id',0):04x}"
+        prod = next(
+            (p for p in PRODUCTS if p["product"] == dev.get("product_id")), None
+        )
+        name = prod["name"] if prod else f"Unknown 0x{dev.get('product_id', 0):04x}"
         print(f"{idx}. {name}")
         print(f"   manufacturer: {dev.get('manufacturer_string')}")
         print(f"   product: {dev.get('product_string')}")
-        print(f"   vendor_id: 0x{dev.get('vendor_id',0):04x} product_id: 0x{dev.get('product_id',0):04x}")
+        print(
+            f"   vendor_id: 0x{dev.get('vendor_id', 0):04x} product_id: 0x{dev.get('product_id', 0):04x}"
+        )
         print(f"   path: {dev.get('path')}")
     state = load_state()
     state["devices"] = devices
@@ -195,7 +206,9 @@ def handle_poll(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="roccat-aimo-cli", description="Roccat AIMO CLI")
+    parser = argparse.ArgumentParser(
+        prog="roccat-aimo-cli", description="Roccat AIMO CLI"
+    )
     sub = parser.add_subparsers(dest="command")
 
     list_p = sub.add_parser("list", help="List Roccat devices")
