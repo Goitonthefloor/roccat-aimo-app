@@ -39,6 +39,7 @@ flatpak install repo io.github.Goitonthefloor.roccat.aimo
 ```
 
 > Hinweis: `scripts/setup-bazzite.sh` prüft ob `flatpak` und `flatpak-builder` vorhanden sind und installiert sie unter Bazzite via `rpm-ostree install` nach. Danach ist ein Reboot nötig, bevor `flatpak-builder` zur Verfügung steht.
+> Das Manifest nutzt die GNOME-Runtime, damit GTK4, libadwaita und Python-HID dabei sind.
 > `flatpak install local-roccat ...` und `flatpak make-local` werden hier bewusst nicht verwendet, weil sie auf Flatpak 1.18 + unvollständigem lokalen Repo fehlschlagen.
 
 ### Arch Linux
@@ -62,8 +63,10 @@ cp src/roccat_aimo_bridge.py ~/.local/bin/roccat-aimo-cli
 chmod +x ~/.local/bin/roccat-aimo-cli
 mkdir -p ~/.local/lib/roccat-aimo-app
 cp src/roccat_aimo_gui.py ~/.local/lib/roccat-aimo-app/roccat_aimo_gui.py
-mkdir -p ~/.local/share/applications
+mkdir -p ~/.local/share/applications ~/.config/systemd/user
 cp src/roccat-aimo.desktop ~/.local/share/applications/roccat-aimo.desktop
+cp etc/systemd/user/roccat-aimo-bridge.service ~/.config/systemd/user/roccat-aimo-bridge.service
+systemctl --user daemon-reload
 systemctl --user enable --now roccat-aimo-bridge.service
 ```
 
@@ -76,12 +79,15 @@ systemctl --user enable --now roccat-aimo-bridge.service
 
 ### CLI
 
+`list` prints a zero-based index. Pass that index to the other commands with `--index`.
+
 ```bash
 roccat-aimo-cli list
-roccat-aimo-cli dpi 1600 1600
-roccat-aimo-cli led 1 --brightness 255
-roccat-aimo-cli rgb 0 0 255 0 0
-roccat-aimo-cli poll
+roccat-aimo-cli list --json
+roccat-aimo-cli dpi 1600 1600 --index 0
+roccat-aimo-cli led 1 --brightness 255 --index 0
+roccat-aimo-cli rgb 0 0 255 0 0 --index 0
+roccat-aimo-cli poll --index 0
 ```
 
 ### GUI
