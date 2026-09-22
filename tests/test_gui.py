@@ -79,6 +79,10 @@ exit 0
                 self.failure = None
                 self.title = None
                 self.subtitle = None
+                self.preview = None
+                self.zone_title = None
+                self.zone_subtitle = None
+                self.hex_green = None
                 self.dpi_status = None
                 self.error_status = None
                 self.invalid_status = None
@@ -96,6 +100,14 @@ exit 0
                     window.g.set_value(0)
                     window.b.set_value(0)
                     window.brightness.set_value(255)
+                    self.preview = window.preview_label.get_label()
+                    self.zone_title = window.zone.get_title()
+                    self.zone_subtitle = window.zone.get_subtitle()
+                    window.hex_entry.set_text("#00FF00")
+                    self.hex_green = int(window.g.get_value())
+                    window.r.set_value(255)
+                    window.g.set_value(0)
+                    window.b.set_value(0)
                     window.apply_all()
                     self.dpi_status = window.status_label.get_label()
                     os.environ["ROCCAT_AIMO_CLI"] = bad
@@ -116,6 +128,11 @@ exit 0
         self.assertEqual(app.title, "Kone AIMO")
         self.assertIn("0x1e7d", app.subtitle)
         self.assertIn("0x2e27", app.subtitle)
+        self.assertIn("11 LEDs", app.subtitle)
+        self.assertEqual(app.preview, "#FF0000")
+        self.assertEqual(app.zone_title, "LED")
+        self.assertEqual(app.zone_subtitle, "Wheel")
+        self.assertEqual(app.hex_green, 255)
         self.assertIn("RGB 255,0,0 brightness 255 index 0", app.dpi_status)
         self.assertIsNone(app.error_rows)
         self.assertIn("hidapi", app.error_status)
