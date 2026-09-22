@@ -10,6 +10,8 @@ Userspace bridge for **Roccat Kone AIMO** and **Vulcan AIMO** on Linux.
 - Arch PKGBUILD included
 - Flatpak manifest included
 
+![Roccat AIMO RGB controller](docs/screenshots/rgb-controller.png)
+
 ## Supported Devices
 
 - Roccat Kone AIMO (`1e7d:2e27`), 11 LEDs
@@ -101,6 +103,10 @@ roccat-aimo-cli poll --index 0
 ```bash
 roccat-aimo-cli gui
 ```
+
+Pulse, Breathe und Rainbow laufen im Fenster. Der Speed-Schieber geht von 0.25× bis 4×.
+
+![Rainbow effect with speed control](docs/screenshots/rainbow-effect.png)
 
 ## Build
 
