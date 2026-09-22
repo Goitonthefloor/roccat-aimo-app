@@ -1,7 +1,7 @@
 app-id: io.github.Goitonthefloor.roccat.aimo
-runtime: org.freedesktop.Platform
-runtime-version: '23.08'
-sdk: org.freedesktop.Sdk
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
 command: roccat-aimo-cli
 finish-args:
   - --socket=wayland
@@ -10,12 +10,32 @@ finish-args:
   - --device=all
 
 modules:
+  - name: python3-hidapi
+    buildsystem: simple
+    build-commands:
+      - |
+        set -eu
+        python3 -m pip install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix="${FLATPAK_DEST}" Cython
+        pyver="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+        export PYTHONPATH="${FLATPAK_DEST}/lib/python${pyver}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+        export HIDAPI_WITH_HIDRAW=1
+        export HIDAPI_WITH_LIBUSB=0
+        python3 -m pip install --verbose --exists-action=i --no-build-isolation --no-index --find-links="file://${PWD}" --prefix="${FLATPAK_DEST}" hidapi
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/18/ab/915337fb39ab4f4539a313df38fc69938df3bf14141b90d61dfd5c2919de/cython-3.1.3.tar.gz
+        sha256: 10ee785e42328924b78f75a74f66a813cb956b4a9bc91c44816d089d5934c089
+      - type: file
+        url: https://files.pythonhosted.org/packages/74/f6/caad9ed701fbb9223eb9e0b41a5514390769b4cb3084a2704ab69e9df0fe/hidapi-0.15.0.tar.gz
+        sha256: ecbc265cbe8b7b88755f421e0ba25f084091ec550c2b90ff9e8ddd4fcd540311
+
   - name: roccat-aimo-app
     buildsystem: simple
     build-commands:
       - install -Dm755 src/roccat_aimo_bridge.py /app/bin/roccat-aimo-cli
       - install -Dm644 src/roccat_aimo_gui.py /app/lib/roccat-aimo-app/roccat_aimo_gui.py
       - install -Dm644 src/roccat-aimo-bridge.service /app/share/systemd/user/roccat-aimo-bridge.service
+      - install -Dm644 src/roccat-aimo.desktop /app/share/applications/io.github.Goitonthefloor.roccat.aimo.desktop
       - install -Dm644 README.md /app/share/doc/roccat-aimo-app/README.md
       - install -Dm644 LICENSE /app/share/licenses/roccat-aimo-app/LICENSE
     sources:
