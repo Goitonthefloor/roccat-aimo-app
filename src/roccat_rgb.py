@@ -8,6 +8,7 @@ Kone AIMO colors use the hidraw feature report published for Linux:
 report 0x0d, header 0x0d 0x2e, then 11 LEDs as R,G,B,0x00.
 """
 
+import math
 from typing import List, Sequence, Tuple
 
 Color = Tuple[int, int, int]
@@ -102,6 +103,74 @@ def vulcan_led_packets(colors: Sequence[Color]) -> List[bytes]:
         chunk = stream[index * 64:(index + 1) * 64]
         packets.append(bytes([0x00]) + chunk.ljust(64, b"\x00"))
     return packets
+
+EFFECTS = ("pulse", "breathe", "rainbow")
+EFFECT_FPS = 12
+PULSE_PERIOD = 24
+BREATHE_PERIOD = 72
+RAINBOW_PERIOD = 96
+
+
+def _phase(frame: int, period: int, speed: float) -> float:
+    rate = max(0.25, min(4.0, float(speed)))
+    return (frame * rate / period) % 1.0
+
+
+def envelope_pulse(phase: float) -> float:
+    """Sharp brightness peak once per cycle."""
+    wave = 0.5 - 0.5 * math.cos(2 * math.pi * phase)
+    return wave ** 6
+
+
+def envelope_breathe(phase: float) -> float:
+    """Smooth fade from dark to bright and back."""
+    return 0.5 - 0.5 * math.cos(2 * math.pi * phase)
+
+
+def hsv_to_rgb(hue: float, value: int) -> Color:
+    hue = hue % 1.0
+    sector = int(hue * 6) % 6
+    fraction = hue * 6 - int(hue * 6)
+    level = clamp_channel(value)
+    drop = int(round(level * (1 - fraction)))
+    rise = int(round(level * fraction))
+    table = (
+        (level, rise, 0),
+        (drop, level, 0),
+        (0, level, rise),
+        (0, drop, level),
+        (rise, 0, level),
+        (level, 0, drop),
+    )
+    return table[sector]
+
+
+def effect_colors(
+    name: str,
+    red: int,
+    green: int,
+    blue: int,
+    brightness: int,
+    frame: int,
+    count: int,
+    speed: float = 1.0,
+) -> List[Color]:
+    """One animation frame for every light on the device."""
+    if name not in EFFECTS:
+        raise ValueError(f"Unknown effect {name}")
+    if count < 1:
+        raise ValueError("Effect needs at least one light")
+    if name == "rainbow":
+        phase = _phase(frame, RAINBOW_PERIOD, speed)
+        level = clamp_channel(brightness)
+        return [hsv_to_rgb(phase + index / count, level) for index in range(count)]
+    period = PULSE_PERIOD if name == "pulse" else BREATHE_PERIOD
+    envelope = envelope_pulse if name == "pulse" else envelope_breathe
+    amount = int(round(envelope(_phase(frame, period, speed)) * 255))
+    peak = scale_color(red, green, blue, brightness)
+    color = scale_color(peak[0], peak[1], peak[2], amount)
+    return [color] * count
+
 
 VULCAN_INIT_REPORTS = (
     bytes.fromhex("150001"),

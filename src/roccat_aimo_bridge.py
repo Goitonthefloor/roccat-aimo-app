@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -397,21 +398,81 @@ def _send_vulcan_colors(group: Dict[str, Any], colors: Sequence[Tuple[int, int, 
             pass
 
 
-def paint_device(group: Dict[str, Any], color: Tuple[int, int, int], led: Optional[int]) -> str:
+def _send_colors(group: Dict[str, Any], colors: Sequence[Tuple[int, int, int]]) -> str:
     kind = group.get("kind")
-    colors = _apply_color_map(group, color, led)
     if kind == "kone":
         _send_kone_colors(group, colors)
-        target = "all 11 LEDs" if led is None else roccat_rgb.KONE_LED_NAMES[led]
-    elif kind == "vulcan":
+        return "all 11 LEDs"
+    if kind == "vulcan":
         _send_vulcan_colors(group, colors)
-        target = "all 144 keys" if led is None else f"key {led}"
-    else:
-        product = int(group.get("product_id") or 0)
-        raise OSError(f"No RGB controller for product 0x{product:04x}")
+        return "all 144 keys"
+    product = int(group.get("product_id") or 0)
+    raise OSError(f"No RGB controller for product 0x{product:04x}")
+
+
+def paint_device(group: Dict[str, Any], color: Tuple[int, int, int], led: Optional[int]) -> str:
+    colors = _apply_color_map(group, color, led)
+    target = _send_colors(group, colors)
+    if led is not None:
+        target = roccat_rgb.KONE_LED_NAMES[led] if group.get("kind") == "kone" else f"key {led}"
     _save_colors(group, colors)
     red, green, blue = color
     return f"RGB {red},{green},{blue} on {group.get('name')} {target}"
+
+
+def _effect_interval() -> float:
+    raw = os.environ.get("ROCCAT_AIMO_EFFECT_INTERVAL")
+    if raw is None:
+        return 1 / roccat_rgb.EFFECT_FPS
+    return max(0.0, float(raw))
+
+
+def handle_effect(args: argparse.Namespace) -> int:
+    group = _pick_device(args.index)
+    if group is None:
+        return 1
+    kind = group.get("kind")
+    if kind == "kone":
+        count = roccat_rgb.KONE_LED_COUNT
+    elif kind == "vulcan":
+        count = roccat_rgb.VULCAN_KEY_COUNT
+    else:
+        product = int(group.get("product_id") or 0)
+        print(f"No RGB controller for product 0x{product:04x}", file=sys.stderr)
+        return 1
+
+    def _stop(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+    frame = 0
+    limit = args.frames
+    try:
+        while limit <= 0 or frame < limit:
+            started = time.monotonic()
+            colors = roccat_rgb.effect_colors(
+                args.name,
+                args.r,
+                args.g,
+                args.b,
+                args.brightness,
+                frame,
+                count,
+                args.speed,
+            )
+            _send_colors(group, colors)
+            preview = colors[0]
+            print(f"FRAME {preview[0]} {preview[1]} {preview[2]}", flush=True)
+            frame += 1
+            if limit > 0 and frame >= limit:
+                break
+            remaining = _effect_interval() - (time.monotonic() - started)
+            if remaining > 0:
+                time.sleep(remaining)
+    except KeyboardInterrupt:
+        return 0
+    return 0
 
 
 def _run_on_device(index: int, action: Any) -> int:
@@ -501,6 +562,17 @@ def build_parser() -> argparse.ArgumentParser:
     rgb_p.add_argument("--brightness", type=int, default=255, help="Scale the color, 0-255")
     rgb_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")
     rgb_p.set_defaults(func=handle_rgb)
+
+    effect_p = sub.add_parser("effect", help="Loop pulse, breathe, or rainbow until stopped")
+    effect_p.add_argument("name", choices=roccat_rgb.EFFECTS)
+    effect_p.add_argument("r", type=int)
+    effect_p.add_argument("g", type=int)
+    effect_p.add_argument("b", type=int)
+    effect_p.add_argument("--brightness", type=int, default=255, help="Scale the color, 0-255")
+    effect_p.add_argument("--speed", type=float, default=1.0, help="0.25 to 4")
+    effect_p.add_argument("--frames", type=int, default=0, help="Stop after this many frames; 0 runs until interrupted")
+    effect_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")
+    effect_p.set_defaults(func=handle_effect)
 
     poll_p = sub.add_parser("poll", help="Read HID report")
     poll_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")

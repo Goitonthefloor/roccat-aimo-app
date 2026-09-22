@@ -88,6 +88,8 @@ roccat-aimo-cli list
 roccat-aimo-cli list --json
 roccat-aimo-cli rgb 255 0 0 --index 0
 roccat-aimo-cli rgb 0 255 0 --led 0 --brightness 180 --index 0
+roccat-aimo-cli effect breathe 255 0 0 --index 0
+roccat-aimo-cli effect rainbow 255 255 255 --speed 1 --index 0
 roccat-aimo-cli led 0 --index 0
 roccat-aimo-cli poll --index 0
 ```
