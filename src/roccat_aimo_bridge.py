@@ -459,7 +459,7 @@ def handle_effect(args: argparse.Namespace) -> int:
                 args.brightness,
                 frame,
                 count,
-                args.speed,
+                roccat_rgb.clamp_speed(args.speed),
             )
             _send_colors(group, colors)
             preview = colors[0]

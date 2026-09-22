@@ -202,8 +202,10 @@ class RoccatGui(Adw.ApplicationWindow):
         self.g = self._scale(0, "channel-green")
         self.b = self._scale(0, "channel-blue")
         self.brightness = self._scale(255, None)
+        self.speed = self._speed_scale(1.0)
         for scale in (self.r, self.g, self.b, self.brightness):
             scale.connect("value-changed", self._sync_preview)
+        self.speed.connect("value-changed", self._on_speed_changed)
 
         self.zone = Adw.SpinRow.new_with_range(0, 143, 1)
         self.zone.set_digits(0)
@@ -280,6 +282,12 @@ class RoccatGui(Adw.ApplicationWindow):
         stop.connect("clicked", lambda _: self.stop_effect(restore=True))
         effects.append(stop)
         content.append(effects)
+
+        speed_group = Adw.PreferencesGroup()
+        self.speed_value = self._add_channel(
+            speed_group, "Speed", self.speed, format_value=self._format_speed, value_width=48
+        )
+        content.append(speed_group)
 
         color_group = Adw.PreferencesGroup(title="Color")
         self.red_value = self._add_channel(color_group, "Red", self.r)
@@ -376,7 +384,33 @@ class RoccatGui(Adw.ApplicationWindow):
             scale.add_css_class(css_class)
         return scale
 
-    def _add_channel(self, group: Adw.PreferencesGroup, title: str, scale: Gtk.Scale) -> Gtk.Label:
+    @staticmethod
+    def _speed_scale(value: float) -> Gtk.Scale:
+        scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
+        scale.set_range(0.25, 4.0)
+        scale.set_increments(0.25, 0.5)
+        scale.set_round_digits(2)
+        scale.set_draw_value(False)
+        scale.set_hexpand(True)
+        scale.set_value(value)
+        scale.set_tooltip_text("Effect speed, 0.25× to 4×")
+        return scale
+
+    @staticmethod
+    def _format_speed(value: float) -> str:
+        return f"{roccat_rgb.clamp_speed(value):.2f}×"
+
+    def _effect_speed(self) -> float:
+        return roccat_rgb.clamp_speed(self.speed.get_value())
+
+    def _add_channel(
+        self,
+        group: Adw.PreferencesGroup,
+        title: str,
+        scale: Gtk.Scale,
+        format_value=None,
+        value_width: int = 36,
+    ) -> Gtk.Label:
         row = Adw.PreferencesRow()
         row.set_activatable(False)
         row.set_selectable(False)
@@ -389,8 +423,9 @@ class RoccatGui(Adw.ApplicationWindow):
         name.set_size_request(92, -1)
         scale.set_hexpand(True)
         scale.set_valign(Gtk.Align.CENTER)
-        value = Gtk.Label(label=str(int(scale.get_value())), xalign=1)
-        value.set_size_request(36, -1)
+        formatter = format_value or (lambda amount: str(int(amount)))
+        value = Gtk.Label(label=formatter(scale.get_value()), xalign=1)
+        value.set_size_request(value_width, -1)
         value.add_css_class("numeric")
         value.add_css_class("dim-label")
         box.append(name)
@@ -582,9 +617,16 @@ class RoccatGui(Adw.ApplicationWindow):
             str(int(self.b.get_value())),
             "--brightness",
             str(int(self.brightness.get_value())),
+            "--speed",
+            f"{self._effect_speed():.2f}",
             "--index",
             str(self.selected_index),
         ]
+
+    def _on_speed_changed(self, *_args) -> None:
+        self.speed_value.set_label(self._format_speed(self.speed.get_value()))
+        if self._effect_name:
+            self._schedule_effect_respawn()
 
     def _stop_effect_process(self) -> None:
         self._effect_gen += 1
@@ -648,6 +690,7 @@ class RoccatGui(Adw.ApplicationWindow):
             int(self.brightness.get_value()),
             self._effect_frame,
             count,
+            self._effect_speed(),
         )
         self._effect_frame += 1
         red, green, blue = colors[0]

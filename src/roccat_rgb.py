@@ -57,6 +57,9 @@ def product_name(product_id: int) -> str:
 def clamp_channel(value: int) -> int:
     return max(0, min(255, int(value)))
 
+def clamp_speed(value: float) -> float:
+    return max(0.25, min(4.0, float(value)))
+
 def scale_color(r: int, g: int, b: int, brightness: int = 255) -> Color:
     factor = clamp_channel(brightness) / 255
     return (
@@ -112,8 +115,7 @@ RAINBOW_PERIOD = 96
 
 
 def _phase(frame: int, period: int, speed: float) -> float:
-    rate = max(0.25, min(4.0, float(speed)))
-    return (frame * rate / period) % 1.0
+    return (frame * clamp_speed(speed) / period) % 1.0
 
 
 def envelope_pulse(phase: float) -> float:

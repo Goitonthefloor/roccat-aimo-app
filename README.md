@@ -83,6 +83,8 @@ systemctl --user enable --now roccat-aimo-bridge.service
 
 `rgb` paints a Kone AIMO (11 LEDs) or Vulcan 100/120 AIMO (144 keys). `--led` changes one light and leaves the others as they were.
 
+`effect pulse|breathe|rainbow` loops the same reports. `--speed` is 0.25 to 4, and the GUI has a matching slider.
+
 ```bash
 roccat-aimo-cli list
 roccat-aimo-cli list --json

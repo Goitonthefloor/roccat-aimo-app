@@ -84,6 +84,8 @@ exit 0
                 self.zone_subtitle = None
                 self.hex_green = None
                 self.dpi_status = None
+                self.speed_label = None
+                self.effect_args = None
                 self.error_status = None
                 self.invalid_status = None
                 self.error_rows = None
@@ -105,6 +107,11 @@ exit 0
                     self.zone_subtitle = window.zone.get_subtitle()
                     window.hex_entry.set_text("#00FF00")
                     self.hex_green = int(window.g.get_value())
+                    window.speed.set_value(2)
+                    self.speed_label = window.speed_value.get_label()
+                    window._effect_name = "pulse"
+                    self.effect_args = window._effect_args()
+                    window._effect_name = None
                     window.r.set_value(255)
                     window.g.set_value(0)
                     window.b.set_value(0)
@@ -133,6 +140,9 @@ exit 0
         self.assertEqual(app.zone_title, "LED")
         self.assertEqual(app.zone_subtitle, "Wheel")
         self.assertEqual(app.hex_green, 255)
+        self.assertEqual(app.speed_label, "2.00×")
+        self.assertIn("--speed", app.effect_args)
+        self.assertEqual(app.effect_args[app.effect_args.index("--speed") + 1], "2.00")
         self.assertIn("RGB 255,0,0 brightness 255 index 0", app.dpi_status)
         self.assertIsNone(app.error_rows)
         self.assertIn("hidapi", app.error_status)

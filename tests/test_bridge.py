@@ -204,6 +204,11 @@ class BridgeTests(unittest.TestCase):
         wide = roccat_rgb.effect_colors("rainbow", 0, 0, 0, 255, 0, 144)
         self.assertEqual(wide[0], (255, 0, 0))
         self.assertEqual(wide[72], (0, 255, 255))
+        slow = roccat_rgb.effect_colors("rainbow", 0, 0, 0, 255, 12, 11, 1.0)[0]
+        fast = roccat_rgb.effect_colors("rainbow", 0, 0, 0, 255, 12, 11, 4.0)[0]
+        self.assertNotEqual(slow, fast)
+        self.assertEqual(roccat_rgb.clamp_speed(9), 4.0)
+        self.assertEqual(roccat_rgb.clamp_speed(0), 0.25)
 
     def test_pulse_effect_sends_changing_kone_frames(self):
         os.environ["ROCCAT_AIMO_EFFECT_INTERVAL"] = "0"
