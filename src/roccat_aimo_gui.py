@@ -21,20 +21,38 @@ import roccat_rgb
 STATIC_CSS = """
 .rgb-swatch {
   border-radius: 18px;
-  min-height: 104px;
+  min-height: 72px;
   border: 1px solid rgba(255, 255, 255, 0.28);
 }
-.preset-chip {
-  min-width: 14px;
-  min-height: 14px;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
+button.preset {
+  border-radius: 999px;
+  min-height: 34px;
 }
-.preset-off { background: #1c1c1c; }
-.preset-red { background: #e23b3b; }
-.preset-green { background: #3cba5a; }
-.preset-blue { background: #3d7eff; }
-.preset-white { background: #f2f2f2; }
+button.preset-off {
+  background-color: #2e2e2e;
+  color: #f5f5f5;
+}
+button.preset-red {
+  background-color: #e23b3b;
+  color: #ffffff;
+}
+button.preset-green {
+  background-color: #2f9e49;
+  color: #ffffff;
+}
+button.preset-blue {
+  background-color: #3d7eff;
+  color: #ffffff;
+}
+button.preset-white {
+  background-color: #f2f2f2;
+  color: #1c1c1c;
+}
+button.action-secondary {
+  background-color: #3c3c3c;
+  color: #ffffff;
+}
+scale trough { min-height: 8px; }
 scale.channel-red > trough > highlight { background: #e23b3b; }
 scale.channel-green > trough > highlight { background: #3cba5a; }
 scale.channel-blue > trough > highlight { background: #3d7eff; }
@@ -125,7 +143,7 @@ class RoccatDeviceRow(Adw.ActionRow):
 class RoccatGui(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Roccat AIMO RGB")
-        self.set_default_size(1040, 760)
+        self.set_default_size(960, 640)
         self.selected_index = 0
         self._selected_kind = ""
         self._updating_color = False
@@ -135,8 +153,8 @@ class RoccatGui(Adw.ApplicationWindow):
         self._install_css()
 
         root = Adw.NavigationSplitView()
-        root.set_min_sidebar_width(260)
-        root.set_max_sidebar_width(320)
+        root.set_min_sidebar_width(200)
+        root.set_max_sidebar_width(240)
         self.set_content(root)
 
         sidebar = Adw.NavigationPage(title="Devices")
@@ -188,14 +206,14 @@ class RoccatGui(Adw.ApplicationWindow):
 
         content = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
-            spacing=12,
-            margin_top=12,
-            margin_bottom=12,
+            spacing=8,
+            margin_top=8,
+            margin_bottom=8,
             margin_start=16,
             margin_end=16,
         )
         self.device_title = Gtk.Label(label="RGB controller", xalign=0)
-        self.device_title.add_css_class("title-1")
+        self.device_title.add_css_class("title-2")
         self.device_title.set_wrap(True)
         self.device_subtitle = Gtk.Label(label="Choose a color, then send it to the lights.", xalign=0)
         self.device_subtitle.set_wrap(True)
@@ -203,18 +221,11 @@ class RoccatGui(Adw.ApplicationWindow):
         content.append(self.device_title)
         content.append(self.device_subtitle)
 
-        columns = Gtk.Box(spacing=16)
-        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        left.set_hexpand(True)
-        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        right.set_hexpand(True)
-        right.set_valign(Gtk.Align.START)
-
         self.swatch = Gtk.Box()
         self.swatch.add_css_class("rgb-swatch")
-        self.swatch.set_size_request(220, 148)
+        self.swatch.set_size_request(-1, 72)
         self.swatch.set_hexpand(True)
-        left.append(self.swatch)
+        content.append(self.swatch)
 
         readout = Gtk.Box(spacing=12)
         readout.set_halign(Gtk.Align.CENTER)
@@ -230,39 +241,16 @@ class RoccatGui(Adw.ApplicationWindow):
         self.hex_entry.connect("changed", self._on_hex_changed)
         readout.append(self.preview_label)
         readout.append(self.hex_entry)
-        left.append(readout)
+        content.append(readout)
 
         self.preview_detail = Gtk.Label(label="Full brightness")
         self.preview_detail.add_css_class("dim-label")
         self.preview_detail.set_halign(Gtk.Align.CENTER)
         self.preview_detail.set_wrap(True)
         self.preview_detail.set_justify(Gtk.Justification.CENTER)
-        left.append(self.preview_detail)
+        content.append(self.preview_detail)
 
-        color_group = Adw.PreferencesGroup(title="Color")
-        self.red_value = self._add_channel(color_group, "Red", self.r)
-        self.green_value = self._add_channel(color_group, "Green", self.g)
-        self.blue_value = self._add_channel(color_group, "Blue", self.b)
-        self.brightness_value = self._add_channel(color_group, "Brightness", self.brightness)
-        right.append(color_group)
-
-        light_group = Adw.PreferencesGroup(title="Single light")
-        light_group.add(self.zone)
-        right.append(light_group)
-
-        preset_group = Adw.PreferencesGroup(title="Presets")
-        preset_group.set_description("Sets the color and sends it to every light.")
-        presets = Gtk.FlowBox()
-        presets.set_selection_mode(Gtk.SelectionMode.NONE)
-        presets.set_homogeneous(True)
-        presets.set_min_children_per_line(2)
-        presets.set_max_children_per_line(3)
-        presets.set_column_spacing(8)
-        presets.set_row_spacing(8)
-        presets.set_margin_top(4)
-        presets.set_margin_bottom(8)
-        presets.set_margin_start(12)
-        presets.set_margin_end(12)
+        presets = Gtk.Box(spacing=8, homogeneous=True)
         for label, color, css in (
             ("Off", (0, 0, 0), "preset-off"),
             ("Red", (255, 0, 0), "preset-red"),
@@ -270,12 +258,19 @@ class RoccatGui(Adw.ApplicationWindow):
             ("Blue", (0, 0, 255), "preset-blue"),
             ("White", (255, 255, 255), "preset-white"),
         ):
-            presets.insert(self._preset_button(label, color, css), -1)
-        preset_group.add(presets)
-        left.append(preset_group)
-        columns.append(left)
-        columns.append(right)
-        content.append(columns)
+            presets.append(self._preset_button(label, color, css))
+        content.append(presets)
+
+        color_group = Adw.PreferencesGroup(title="Color")
+        self.red_value = self._add_channel(color_group, "Red", self.r)
+        self.green_value = self._add_channel(color_group, "Green", self.g)
+        self.blue_value = self._add_channel(color_group, "Blue", self.b)
+        self.brightness_value = self._add_channel(color_group, "Brightness", self.brightness)
+        content.append(color_group)
+
+        light_group = Adw.PreferencesGroup(title="One light")
+        light_group.add(self.zone)
+        content.append(light_group)
 
         actions = Gtk.Box(spacing=12, homogeneous=True)
         all_btn = Gtk.Button(label="All lights")
@@ -284,10 +279,10 @@ class RoccatGui(Adw.ApplicationWindow):
         all_btn.connect("clicked", lambda _: self.apply_all())
         one_btn = Gtk.Button(label="Selected light")
         one_btn.add_css_class("pill")
+        one_btn.add_css_class("action-secondary")
         one_btn.connect("clicked", lambda _: self.apply_one())
         actions.append(all_btn)
         actions.append(one_btn)
-        content.append(actions)
 
         self.status_label = Gtk.Label(label="No device selected")
         self.status_label.set_halign(Gtk.Align.START)
@@ -301,7 +296,6 @@ class RoccatGui(Adw.ApplicationWindow):
         self.status_label.set_margin_start(12)
         self.status_label.set_margin_end(12)
         status_card.append(self.status_label)
-        content.append(status_card)
 
         clamp = Adw.Clamp()
         clamp.set_maximum_size(980)
@@ -312,8 +306,19 @@ class RoccatGui(Adw.ApplicationWindow):
         scrolled.set_vexpand(True)
         scrolled.set_child(clamp)
 
+        bottom = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        bottom.set_margin_top(8)
+        bottom.set_margin_bottom(8)
+        bottom.set_margin_start(12)
+        bottom.set_margin_end(12)
+        bottom.append(actions)
+        bottom.append(status_card)
+        toolbar = Adw.ToolbarView()
+        toolbar.set_content(scrolled)
+        toolbar.add_bottom_bar(bottom)
+
         main_page = Adw.NavigationPage(title="RGB")
-        main_page.set_child(scrolled)
+        main_page.set_child(toolbar)
         root.set_sidebar(sidebar)
         root.set_content(main_page)
         self._sync_preview()
@@ -329,7 +334,7 @@ class RoccatGui(Adw.ApplicationWindow):
         Gtk.StyleContext.add_provider_for_display(
             display,
             static,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+            Gtk.STYLE_PROVIDER_PRIORITY_USER,
         )
         Gtk.StyleContext.add_provider_for_display(
             display,
@@ -354,36 +359,30 @@ class RoccatGui(Adw.ApplicationWindow):
         row = Adw.PreferencesRow()
         row.set_activatable(False)
         row.set_selectable(False)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        box.set_margin_top(8)
-        box.set_margin_bottom(8)
+        box = Gtk.Box(spacing=12)
+        box.set_margin_top(2)
+        box.set_margin_bottom(2)
         box.set_margin_start(12)
         box.set_margin_end(12)
-        header = Gtk.Box(spacing=8)
-        name = Gtk.Label(label=title, xalign=0, hexpand=True)
+        name = Gtk.Label(label=title, xalign=0)
+        name.set_size_request(92, -1)
+        scale.set_hexpand(True)
+        scale.set_valign(Gtk.Align.CENTER)
         value = Gtk.Label(label=str(int(scale.get_value())), xalign=1)
+        value.set_size_request(36, -1)
         value.add_css_class("numeric")
         value.add_css_class("dim-label")
-        header.append(name)
-        header.append(value)
-        box.append(header)
+        box.append(name)
         box.append(scale)
+        box.append(value)
         row.set_child(box)
         group.add(row)
         return value
 
     def _preset_button(self, label: str, color: tuple[int, int, int], css: str) -> Gtk.Button:
-        chip = Gtk.Box()
-        chip.add_css_class("preset-chip")
-        chip.add_css_class(css)
-        chip.set_valign(Gtk.Align.CENTER)
-        text = Gtk.Label(label=label)
-        inner = Gtk.Box(spacing=8)
-        inner.set_halign(Gtk.Align.CENTER)
-        inner.append(chip)
-        inner.append(text)
-        button = Gtk.Button()
-        button.set_child(inner)
+        button = Gtk.Button(label=label)
+        button.add_css_class("preset")
+        button.add_css_class(css)
         button.set_hexpand(True)
         button.connect("clicked", lambda _, chosen=color: self.apply_preset(chosen))
         return button
