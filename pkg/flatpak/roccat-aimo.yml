@@ -34,6 +34,7 @@ modules:
     build-commands:
       - install -Dm755 src/roccat_aimo_bridge.py /app/bin/roccat-aimo-cli
       - install -Dm644 src/roccat_aimo_gui.py /app/lib/roccat-aimo-app/roccat_aimo_gui.py
+      - install -Dm644 src/roccat_rgb.py /app/lib/roccat-aimo-app/roccat_rgb.py
       - install -Dm644 src/roccat-aimo-bridge.service /app/share/systemd/user/roccat-aimo-bridge.service
       - install -Dm644 src/roccat-aimo.desktop /app/share/applications/io.github.Goitonthefloor.roccat.aimo.desktop
       - install -Dm644 README.md /app/share/doc/roccat-aimo-app/README.md

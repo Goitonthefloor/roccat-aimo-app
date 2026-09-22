@@ -24,6 +24,7 @@ package() {
   install -Dm755 src/roccat_aimo_bridge.py "${pkgdir}/usr/bin/roccat-aimo-cli"
   install -Dm644 src/roccat-aimo-bridge.service "${pkgdir}/usr/lib/systemd/user/roccat-aimo-bridge.service"
   install -Dm644 src/roccat_aimo_gui.py "${pkgdir}/usr/lib/${pkgname}/roccat_aimo_gui.py"
+  install -Dm644 src/roccat_rgb.py "${pkgdir}/usr/lib/${pkgname}/roccat_rgb.py"
   install -Dm644 src/roccat-aimo.desktop "${pkgdir}/usr/share/applications/roccat-aimo.desktop"
   install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"

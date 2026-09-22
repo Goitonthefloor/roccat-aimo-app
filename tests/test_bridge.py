@@ -25,6 +25,7 @@ class FakeDevice:
         self.read_value = [0x04, 0x01] if read_value is None else read_value
         self.opened = None
         self.written = []
+        self.features = []
         self.closed = False
 
     def open_path(self, path):
@@ -43,6 +44,17 @@ class FakeDevice:
         payload = list(data)
         self.written.append(payload)
         return len(payload)
+
+    def send_feature_report(self, data):
+        if self.fail_write:
+            raise OSError("write failed")
+        payload = list(data)
+        self.features.append(payload)
+        return len(payload)
+
+    def get_feature_report(self, report_id, size):
+        self.features.append(("get", report_id, size))
+        return [report_id, 1, 0]
 
     def read(self, length, timeout_ms=0):
         return list(self.read_value)
@@ -87,6 +99,8 @@ class BridgeTests(unittest.TestCase):
         os.environ["ROCCAT_AIMO_STATE"] = str(self.state)
         self.fake = FakeHid([kone_device()])
         bridge._hid = self.fake
+        bridge._vulcan_ready.clear()
+        os.environ["ROCCAT_AIMO_INIT_DELAY"] = "0"
 
     def tearDown(self):
         bridge._hid = None
@@ -100,6 +114,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload[0]["name"], "Kone AIMO")
+        self.assertEqual(payload[0]["kind"], "kone")
         self.assertEqual(payload[0]["index"], 0)
         self.assertEqual(payload[0]["path"], "/dev/hidraw3")
         self.assertEqual(payload[0]["manufacturer_string"], "ROCCAT")
@@ -137,31 +152,37 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(stdout.getvalue()), [])
 
-    def test_dpi_report_starts_with_report_id_and_clamps(self):
-        stdout = io.StringIO()
-        with contextlib.redirect_stdout(stdout):
-            code = bridge.main(["dpi", "10", "99999", "--index", "0"])
-        self.assertEqual(code, 0)
-        self.assertIn("DPI set to 100/16000", stdout.getvalue())
-        written = self.fake.created[-1].written[0]
-        self.assertEqual(written[0], 0x04)
-        self.assertEqual(written[1:3], [0x03, 0x04])
-        self.assertEqual(written[3:7], [0x00, 0x64, 0x3E, 0x80])
-        self.assertTrue(self.fake.created[-1].closed)
+    def test_dpi_is_rejected_without_a_hid_write(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = bridge.main(["dpi", "1600", "1600", "--index", "0"])
+        self.assertEqual(code, 2)
+        self.assertIn("RGB controller", stderr.getvalue())
+        self.assertEqual(self.fake.created, [])
 
-    def test_led_off_clamps_brightness(self):
+    def test_led_off_sends_kone_feature_report(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             code = bridge.main(["led", "0", "--brightness", "999", "--index", "0"])
         self.assertEqual(code, 0)
-        self.assertIn("LED OFF at 255", stdout.getvalue())
-        self.assertEqual(self.fake.created[-1].written[0], [0x04, 0x07, 0x00, 0xFF])
+        self.assertIn("RGB 0,0,0", stdout.getvalue())
+        reports = [item for item in self.fake.created[-1].features if isinstance(item, list)]
+        color = reports[-1]
+        self.assertEqual(color[:2], [0x0D, 0x2E])
+        self.assertEqual(len(color), 46)
+        self.assertEqual(color[2:6], [0, 0, 0, 0])
+        self.assertTrue(self.fake.created[-1].closed)
 
-    def test_rgb_clamps_coordinates_and_channels(self):
+    def test_rgb_clamps_and_keeps_other_kone_leds(self):
         with contextlib.redirect_stdout(io.StringIO()):
-            code = bridge.main(["rgb", "-4", "40", "300", "-1", "10", "--index", "0"])
-        self.assertEqual(code, 0)
-        self.assertEqual(self.fake.created[-1].written[0], [0x04, 0x0B, 0, 20, 255, 0, 10])
+            first = bridge.main(["rgb", "300", "-1", "10", "--led", "0", "--index", "0"])
+            second = bridge.main(["rgb", "0", "255", "0", "--led", "1", "--brightness", "128", "--index", "0"])
+        self.assertEqual(first, 0)
+        self.assertEqual(second, 0)
+        reports = [item for item in self.fake.created[-1].features if isinstance(item, list) and item[0] == 0x0D]
+        color = reports[-1]
+        self.assertEqual(color[2:6], [255, 0, 10, 0])
+        self.assertEqual(color[6:10], [0, 128, 0, 0])
 
     def test_index_out_of_range_does_not_write(self):
         stderr = io.StringIO()
@@ -183,9 +204,40 @@ class BridgeTests(unittest.TestCase):
         self.fake.fail_write = True
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            code = bridge.main(["dpi", "800", "800"])
+            code = bridge.main(["rgb", "255", "0", "0"])
         self.assertEqual(code, 1)
         self.assertIn("device command failed", stderr.getvalue())
+
+    def test_vulcan_rgb_uses_led_interface_after_init(self):
+        self.fake.devices = [
+            {
+                "vendor_id": 0x1E7D,
+                "product_id": 0x307A,
+                "path": b"0001:0005:01",
+                "interface_number": 1,
+                "product_string": "Vulcan 100 AIMO",
+            },
+            {
+                "vendor_id": 0x1E7D,
+                "product_id": 0x307A,
+                "path": b"0001:0005:03",
+                "interface_number": 3,
+                "product_string": "Vulcan 100 AIMO",
+            },
+        ]
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = bridge.main(["rgb", "0", "0", "255", "--index", "0"])
+        self.assertEqual(code, 0)
+        ctrl = next(dev for dev in self.fake.created if dev.opened and dev.opened[1] in (b"0001:0005:01", "0001:0005:01"))
+        led = next(dev for dev in self.fake.created if dev.opened and dev.opened[1] in (b"0001:0005:03", "0001:0005:03"))
+        feature_ids = [item[0] for item in ctrl.features if isinstance(item, list)]
+        self.assertEqual(feature_ids[0], 0x15)
+        self.assertEqual(feature_ids[-1], 0x13)
+        self.assertEqual(len(led.written), 7)
+        self.assertEqual(led.written[0][:5], [0x00, 0xA1, 0x01, 0x01, 0xB4])
+        self.assertEqual(led.written[0][5], 0)
+        self.assertEqual(led.written[0][5 + 24], 255)
+        self.assertTrue(all(len(packet) == 65 for packet in led.written))
 
     def test_corrupt_state_is_replaced(self):
         self.state.write_text("{not json")
