@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 import roccat_aimo_bridge as bridge
+import roccat_rgb
 
 
 class FakeDevice:
@@ -183,6 +184,68 @@ class BridgeTests(unittest.TestCase):
         color = reports[-1]
         self.assertEqual(color[2:6], [255, 0, 10, 0])
         self.assertEqual(color[6:10], [0, 128, 0, 0])
+
+    def test_effect_envelopes_and_rainbow_shift(self):
+        breathe_off = roccat_rgb.effect_colors("breathe", 255, 0, 0, 255, 0, 11)[0]
+        breathe_peak = roccat_rgb.effect_colors("breathe", 255, 0, 0, 255, 36, 11)[0]
+        pulse_off = roccat_rgb.effect_colors("pulse", 255, 0, 0, 255, 0, 11)[0]
+        pulse_peak = roccat_rgb.effect_colors("pulse", 255, 0, 0, 255, 12, 11)[0]
+        self.assertEqual(breathe_off, (0, 0, 0))
+        self.assertEqual(breathe_peak, (255, 0, 0))
+        self.assertEqual(pulse_off, (0, 0, 0))
+        self.assertEqual(pulse_peak, (255, 0, 0))
+        self.assertLess(
+            roccat_rgb.effect_colors("pulse", 255, 0, 0, 255, 3, 11)[0][0],
+            roccat_rgb.effect_colors("breathe", 255, 0, 0, 255, 9, 11)[0][0],
+        )
+        rainbow = roccat_rgb.effect_colors("rainbow", 0, 0, 0, 255, 0, 11)
+        self.assertEqual(rainbow[0], (255, 0, 0))
+        self.assertNotEqual(rainbow[0], rainbow[5])
+        wide = roccat_rgb.effect_colors("rainbow", 0, 0, 0, 255, 0, 144)
+        self.assertEqual(wide[0], (255, 0, 0))
+        self.assertEqual(wide[72], (0, 255, 255))
+
+    def test_pulse_effect_sends_changing_kone_frames(self):
+        os.environ["ROCCAT_AIMO_EFFECT_INTERVAL"] = "0"
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = bridge.main(
+                ["effect", "pulse", "255", "0", "0", "--frames", "4", "--speed", "4", "--index", "0"]
+            )
+        self.assertEqual(code, 0)
+        reports = []
+        for dev in self.fake.created:
+            for item in dev.features:
+                if isinstance(item, list) and item and item[0] == 0x0D:
+                    reports.append(item)
+        self.assertGreaterEqual(len(reports), 2)
+        self.assertEqual(reports[0][2:5], [0, 0, 0])
+        self.assertEqual(reports[-1][2:5], [255, 0, 0])
+        self.assertIn("FRAME 0 0 0", stdout.getvalue())
+        self.assertIn("FRAME 255 0 0", stdout.getvalue())
+
+    def test_rainbow_effect_colors_separate_kone_leds(self):
+        os.environ["ROCCAT_AIMO_EFFECT_INTERVAL"] = "0"
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = bridge.main(["effect", "rainbow", "255", "255", "255", "--frames", "1", "--index", "0"])
+        self.assertEqual(code, 0)
+        report = next(
+            item
+            for dev in self.fake.created
+            for item in dev.features
+            if isinstance(item, list) and item and item[0] == 0x0D
+        )
+        self.assertEqual(report[2:5], [255, 0, 0])
+        self.assertNotEqual(report[2:5], report[2 + 5 * 4:5 + 5 * 4])
+
+    def test_effect_without_device_does_not_open_hid(self):
+        self.fake.devices = []
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = bridge.main(["effect", "breathe", "255", "0", "0", "--frames", "3"])
+        self.assertEqual(code, 1)
+        self.assertIn("No Roccat devices found.", stderr.getvalue())
+        self.assertEqual(self.fake.created, [])
 
     def test_index_out_of_range_does_not_write(self):
         stderr = io.StringIO()

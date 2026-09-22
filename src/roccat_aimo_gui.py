@@ -13,7 +13,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, Gdk
+from gi.repository import Gtk, Adw, Gdk, GLib
 
 import roccat_rgb
 
@@ -147,6 +147,13 @@ class RoccatGui(Adw.ApplicationWindow):
         self.selected_index = 0
         self._selected_kind = ""
         self._updating_color = False
+        self._effect_name = None
+        self._effect_frame = 0
+        self._effect_source = None
+        self._effect_proc = None
+        self._effect_gen = 0
+        self._effect_restart = None
+        self._effect_buttons = {}
         self.last_report = {}
         self._swatch_css = None
 
@@ -261,6 +268,19 @@ class RoccatGui(Adw.ApplicationWindow):
             presets.append(self._preset_button(label, color, css))
         content.append(presets)
 
+        effects = Gtk.Box(spacing=8, homogeneous=True)
+        for name in roccat_rgb.EFFECTS:
+            button = Gtk.Button(label=name.capitalize())
+            button.add_css_class("pill")
+            button.connect("clicked", lambda _, chosen=name: self.start_effect(chosen))
+            self._effect_buttons[name] = button
+            effects.append(button)
+        stop = Gtk.Button(label="Stop")
+        stop.add_css_class("pill")
+        stop.connect("clicked", lambda _: self.stop_effect(restore=True))
+        effects.append(stop)
+        content.append(effects)
+
         color_group = Adw.PreferencesGroup(title="Color")
         self.red_value = self._add_channel(color_group, "Red", self.r)
         self.green_value = self._add_channel(color_group, "Green", self.g)
@@ -321,6 +341,7 @@ class RoccatGui(Adw.ApplicationWindow):
         main_page.set_child(toolbar)
         root.set_sidebar(sidebar)
         root.set_content(main_page)
+        self.connect("close-request", self._on_close)
         self._sync_preview()
         self._sync_zone_hint()
 
@@ -405,17 +426,20 @@ class RoccatGui(Adw.ApplicationWindow):
         self.green_value.set_label(str(green))
         self.blue_value.set_label(str(blue))
         self.brightness_value.set_label(str(brightness))
-        if brightness >= 255:
-            self.preview_detail.set_label("Full brightness")
-        else:
-            percent = round(brightness * 100 / 255)
-            self.preview_detail.set_label(f"Brightness {percent}% · device receives {device_hex}")
         self._updating_color = True
         try:
             if self.hex_entry.get_text().upper() != chosen:
                 self.hex_entry.set_text(chosen)
         finally:
             self._updating_color = False
+        if self._effect_name:
+            self._schedule_effect_respawn()
+            return
+        if brightness >= 255:
+            self.preview_detail.set_label("Full brightness")
+        else:
+            percent = round(brightness * 100 / 255)
+            self.preview_detail.set_label(f"Brightness {percent}% · device receives {device_hex}")
         if self._swatch_css is not None:
             self._swatch_css.load_from_string(
                 ".rgb-swatch { background-color: " + device_hex + "; }"
@@ -538,6 +562,125 @@ class RoccatGui(Adw.ApplicationWindow):
             args.extend(["--led", str(led)])
         return args
 
+    def _on_close(self, *_args) -> bool:
+        self.stop_effect(restore=False)
+        return False
+
+    def _highlight_effect(self, name: str | None) -> None:
+        for effect, button in self._effect_buttons.items():
+            if effect == name:
+                button.add_css_class("suggested-action")
+            else:
+                button.remove_css_class("suggested-action")
+
+    def _effect_args(self) -> list[str]:
+        return [
+            "effect",
+            self._effect_name or "breathe",
+            str(int(self.r.get_value())),
+            str(int(self.g.get_value())),
+            str(int(self.b.get_value())),
+            "--brightness",
+            str(int(self.brightness.get_value())),
+            "--index",
+            str(self.selected_index),
+        ]
+
+    def _stop_effect_process(self) -> None:
+        self._effect_gen += 1
+        proc = self._effect_proc
+        self._effect_proc = None
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+
+    def _spawn_effect_process(self) -> None:
+        self._stop_effect_process()
+        if not self._effect_name:
+            return
+        try:
+            proc = subprocess.Popen(
+                [*resolve_cli(), *self._effect_args()],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except Exception as exc:
+            self._set_status(f"Effect error: {exc}")
+            return
+        self._effect_proc = proc
+        generation = self._effect_gen
+
+        def exited(pid, status, gen=generation):
+            if gen != self._effect_gen:
+                return False
+            current = self._effect_proc
+            err = ""
+            if current is not None and current.pid == pid:
+                err = ((current.stderr.read() if current.stderr else "") or "").strip()
+                self._effect_proc = None
+            if self._effect_name and os.WIFEXITED(status) and os.WEXITSTATUS(status) != 0:
+                self._set_status(err.splitlines()[-1] if err else "Effect stopped")
+            return False
+
+        GLib.child_watch_add(proc.pid, exited)
+
+    def _schedule_effect_respawn(self) -> None:
+        if self._effect_restart is not None:
+            GLib.source_remove(self._effect_restart)
+        self._effect_restart = GLib.timeout_add(200, self._respawn_effect)
+
+    def _respawn_effect(self) -> bool:
+        self._effect_restart = None
+        if self._effect_name:
+            self._spawn_effect_process()
+        return False
+
+    def _effect_tick(self) -> bool:
+        if not self._effect_name:
+            self._effect_source = None
+            return False
+        count = roccat_rgb.KONE_LED_COUNT if self._selected_kind == "kone" else roccat_rgb.VULCAN_KEY_COUNT
+        colors = roccat_rgb.effect_colors(
+            self._effect_name,
+            int(self.r.get_value()),
+            int(self.g.get_value()),
+            int(self.b.get_value()),
+            int(self.brightness.get_value()),
+            self._effect_frame,
+            count,
+        )
+        self._effect_frame += 1
+        red, green, blue = colors[0]
+        shown = f"#{red:02X}{green:02X}{blue:02X}"
+        self.preview_detail.set_label(f"{self._effect_name.capitalize()} · {shown}")
+        if self._swatch_css is not None:
+            self._swatch_css.load_from_string(".rgb-swatch { background-color: " + shown + "; }")
+        return True
+
+    def start_effect(self, name: str) -> None:
+        self.stop_effect(restore=False)
+        self._effect_name = name
+        self._effect_frame = 0
+        self._highlight_effect(name)
+        self._effect_source = GLib.timeout_add(84, self._effect_tick)
+        self._spawn_effect_process()
+        self._set_status(f"{name.capitalize()} running")
+
+    def stop_effect(self, restore: bool = True) -> None:
+        was_running = self._effect_name is not None
+        self._effect_name = None
+        if self._effect_restart is not None:
+            GLib.source_remove(self._effect_restart)
+            self._effect_restart = None
+        if self._effect_source is not None:
+            GLib.source_remove(self._effect_source)
+            self._effect_source = None
+        self._stop_effect_process()
+        self._highlight_effect(None)
+        if restore and was_running:
+            self._sync_preview()
+            self.apply_all()
+
     def apply_preset(self, color: tuple[int, int, int]) -> None:
         self.r.set_value(color[0])
         self.g.set_value(color[1])
@@ -546,6 +689,7 @@ class RoccatGui(Adw.ApplicationWindow):
         self.apply_all()
 
     def apply_all(self) -> None:
+        self.stop_effect(restore=False)
         try:
             proc = run_cli(self._color_args())
         except Exception as exc:
@@ -554,6 +698,7 @@ class RoccatGui(Adw.ApplicationWindow):
         self._report(proc, "RGB applied to all lights")
 
     def apply_one(self) -> None:
+        self.stop_effect(restore=False)
         try:
             proc = run_cli(self._color_args(int(self.zone.get_value())))
         except Exception as exc:
