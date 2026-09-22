@@ -138,54 +138,48 @@ class RoccatGui(Adw.ApplicationWindow):
         self.status_label.set_xalign(0)
         main_box.append(self.status_label)
 
-        self.dpi_x = Gtk.SpinButton()
-        self.dpi_x.set_range(100, 16000)
-        self.dpi_x.set_increments(50, 100)
-        self.dpi_x.set_value(1600)
-        self.dpi_y = Gtk.SpinButton()
-        self.dpi_y.set_range(100, 16000)
-        self.dpi_y.set_increments(50, 100)
-        self.dpi_y.set_value(1600)
-        dpi_btn = Gtk.Button(label="Apply DPI")
-        dpi_btn.connect("clicked", lambda _: self.apply_dpi())
-
-        self.led_switch = Gtk.Switch()
-        self.brightness = self._scale(255)
-        led_btn = Gtk.Button(label="Apply LED")
-        led_btn.connect("clicked", lambda _: self.apply_led())
-
-        self.rgb_row = Gtk.SpinButton()
-        self.rgb_row.set_range(0, 5)
-        self.rgb_row.set_value(0)
-        self.rgb_col = Gtk.SpinButton()
-        self.rgb_col.set_range(0, 20)
-        self.rgb_col.set_value(0)
-        self.r = self._scale(0)
+        self.r = self._scale(255)
         self.g = self._scale(0)
         self.b = self._scale(0)
-        rgb_btn = Gtk.Button(label="Apply RGB")
-        rgb_btn.connect("clicked", lambda _: self.apply_rgb())
+        self.brightness = self._scale(255)
+        self.zone = Gtk.SpinButton()
+        self.zone.set_range(0, 143)
+        self.zone.set_increments(1, 12)
+        self.zone.set_value(0)
 
-        dpi_group = Adw.PreferencesGroup(title="DPI")
-        dpi_group.add(self._suffix_row("X", self.dpi_x))
-        dpi_group.add(self._suffix_row("Y", self.dpi_y))
-        dpi_group.add(self._suffix_row("", dpi_btn))
-        main_box.append(dpi_group)
+        color_group = Adw.PreferencesGroup(title="RGB controller")
+        color_group.add(self._suffix_row("Red", self.r))
+        color_group.add(self._suffix_row("Green", self.g))
+        color_group.add(self._suffix_row("Blue", self.b))
+        color_group.add(self._suffix_row("Brightness", self.brightness))
+        self.zone_row = self._suffix_row("Light", self.zone)
+        color_group.add(self.zone_row)
+        main_box.append(color_group)
 
-        led_group = Adw.PreferencesGroup(title="LED")
-        led_group.add(self._suffix_row("Enabled", self.led_switch))
-        led_group.add(self._suffix_row("Brightness", self.brightness))
-        led_group.add(self._suffix_row("", led_btn))
-        main_box.append(led_group)
+        preset_group = Adw.PreferencesGroup(title="Presets")
+        preset_row = Adw.ActionRow(title="Color")
+        for label, color in (
+            ("Off", (0, 0, 0)),
+            ("Red", (255, 0, 0)),
+            ("Green", (0, 255, 0)),
+            ("Blue", (0, 0, 255)),
+            ("White", (255, 255, 255)),
+        ):
+            button = Gtk.Button(label=label)
+            button.connect("clicked", lambda _, chosen=color: self.apply_preset(chosen))
+            preset_row.add_suffix(_center(button))
+        preset_group.add(preset_row)
+        main_box.append(preset_group)
 
-        rgb_group = Adw.PreferencesGroup(title="RGB")
-        rgb_group.add(self._suffix_row("Row", self.rgb_row))
-        rgb_group.add(self._suffix_row("Col", self.rgb_col))
-        rgb_group.add(self._suffix_row("Red", self.r))
-        rgb_group.add(self._suffix_row("Green", self.g))
-        rgb_group.add(self._suffix_row("Blue", self.b))
-        rgb_group.add(self._suffix_row("", rgb_btn))
-        main_box.append(rgb_group)
+        apply_group = Adw.PreferencesGroup(title="Apply")
+        all_btn = Gtk.Button(label="All lights")
+        all_btn.add_css_class("suggested-action")
+        all_btn.connect("clicked", lambda _: self.apply_all())
+        one_btn = Gtk.Button(label="Selected light")
+        one_btn.connect("clicked", lambda _: self.apply_one())
+        apply_group.add(self._suffix_row("", all_btn))
+        apply_group.add(self._suffix_row("", one_btn))
+        main_box.append(apply_group)
 
         main_page.set_child(main_box)
         root.set_sidebar(sidebar)
@@ -238,6 +232,13 @@ class RoccatGui(Adw.ApplicationWindow):
 
     def select_device(self, row) -> None:
         self.selected_index = row.index
+        kind = row.device.get("kind")
+        if kind == "kone":
+            self.zone.set_range(0, 10)
+            self.zone_row.set_title("LED")
+        else:
+            self.zone.set_range(0, 143)
+            self.zone_row.set_title("Key" if kind == "vulcan" else "Light")
         title = row.device.get("name") or row.device.get("product_string") or row.get_title()
         self.status_label.set_label(f"Selected: {title}")
 
@@ -249,54 +250,42 @@ class RoccatGui(Adw.ApplicationWindow):
         err = (proc.stderr or proc.stdout or "command failed").strip()
         self.status_label.set_label(err)
 
-    def apply_dpi(self) -> None:
-        x = int(self.dpi_x.get_value())
-        y = int(self.dpi_y.get_value())
-        try:
-            proc = run_cli(["dpi", str(x), str(y), "--index", str(self.selected_index)])
-        except Exception as exc:
-            self.status_label.set_label(f"DPI error: {exc}")
-            return
-        self._report(proc, f"DPI applied: {x}/{y}")
+    def _color_args(self, led: int | None = None) -> list[str]:
+        args = [
+            "rgb",
+            str(int(self.r.get_value())),
+            str(int(self.g.get_value())),
+            str(int(self.b.get_value())),
+            "--brightness",
+            str(int(self.brightness.get_value())),
+            "--index",
+            str(self.selected_index),
+        ]
+        if led is not None:
+            args.extend(["--led", str(led)])
+        return args
 
-    def apply_led(self) -> None:
-        on = 1 if self.led_switch.get_active() else 0
-        brightness = int(self.brightness.get_value())
-        try:
-            proc = run_cli([
-                "led",
-                str(on),
-                "--brightness",
-                str(brightness),
-                "--index",
-                str(self.selected_index),
-            ])
-        except Exception as exc:
-            self.status_label.set_label(f"LED error: {exc}")
-            return
-        self._report(proc, f"LED applied: on={on} brightness={brightness}")
+    def apply_preset(self, color: tuple[int, int, int]) -> None:
+        self.r.set_value(color[0])
+        self.g.set_value(color[1])
+        self.b.set_value(color[2])
+        self.apply_all()
 
-    def apply_rgb(self) -> None:
-        row = int(self.rgb_row.get_value())
-        col = int(self.rgb_col.get_value())
-        r = int(self.r.get_value())
-        g = int(self.g.get_value())
-        b = int(self.b.get_value())
+    def apply_all(self) -> None:
         try:
-            proc = run_cli([
-                "rgb",
-                str(row),
-                str(col),
-                str(r),
-                str(g),
-                str(b),
-                "--index",
-                str(self.selected_index),
-            ])
+            proc = run_cli(self._color_args())
         except Exception as exc:
             self.status_label.set_label(f"RGB error: {exc}")
             return
-        self._report(proc, f"RGB applied: ({row},{col}) = {r},{g},{b}")
+        self._report(proc, "RGB applied to all lights")
+
+    def apply_one(self) -> None:
+        try:
+            proc = run_cli(self._color_args(int(self.zone.get_value())))
+        except Exception as exc:
+            self.status_label.set_label(f"RGB error: {exc}")
+            return
+        self._report(proc, "RGB applied to the selected light")
 
 
 class RoccatApp(Adw.Application):

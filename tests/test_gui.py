@@ -44,8 +44,8 @@ case "$1" in
     printf '%s\\n' '[{"index":0,"name":"Kone AIMO","vendor_id":7805,"product_id":11815,"product_string":"ROCCAT Kone AIMO"}]'
     exit 0
     ;;
-  dpi)
-    echo "DPI set to $2/$3 on index $5"
+  rgb)
+    echo "RGB $2,$3,$4 brightness $6 index $8"
     exit 0
     ;;
   *)
@@ -92,7 +92,11 @@ exit 0
                     self.title = row.get_title()
                     self.subtitle = row.get_subtitle()
                     window.select_device(row)
-                    window.apply_dpi()
+                    window.r.set_value(255)
+                    window.g.set_value(0)
+                    window.b.set_value(0)
+                    window.brightness.set_value(255)
+                    window.apply_all()
                     self.dpi_status = window.status_label.get_label()
                     os.environ["ROCCAT_AIMO_CLI"] = bad
                     window.load_devices()
@@ -112,7 +116,7 @@ exit 0
         self.assertEqual(app.title, "Kone AIMO")
         self.assertIn("0x1e7d", app.subtitle)
         self.assertIn("0x2e27", app.subtitle)
-        self.assertIn("DPI set to 1600/1600 on index 0", app.dpi_status)
+        self.assertIn("RGB 255,0,0 brightness 255 index 0", app.dpi_status)
         self.assertIsNone(app.error_rows)
         self.assertIn("hidapi", app.error_status)
         self.assertIn("not valid JSON", app.invalid_status)

@@ -7,17 +7,29 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-ROCCAT_VID = 0x1E7D
-PRODUCTS = [
-    # Kone AIMO
-    {"name": "Kone AIMO", "vendor": ROCCAT_VID, "product": 0x2E27},
-    # Vulcan AIMO series
-    {"name": "Vulcan AIMO", "vendor": ROCCAT_VID, "product": 0x2E24},
-    {"name": "Vulcan 120 AIMO", "vendor": ROCCAT_VID, "product": 0x2E26},
-    {"name": "Vulcan TKL AIMO", "vendor": ROCCAT_VID, "product": 0x2E2A},
-]
+
+def _ensure_local_modules() -> None:
+    for parent in (
+        Path(__file__).resolve().parent,
+        Path("/app/lib/roccat-aimo-app"),
+        Path.home() / ".local" / "lib" / "roccat-aimo-app",
+        Path("/usr/lib/roccat-aimo-app"),
+        Path("/usr/local/lib/roccat-aimo-app"),
+    ):
+        if (parent / "roccat_rgb.py").exists():
+            parent_text = str(parent)
+            if parent_text not in sys.path:
+                sys.path.insert(0, parent_text)
+            return
+
+
+_ensure_local_modules()
+import roccat_rgb
+
+ROCCAT_VID = roccat_rgb.ROCCAT_VID
+_vulcan_ready = set()
 
 _hid: Any = None
 
@@ -82,11 +94,7 @@ def _json_safe(value: Any) -> Any:
 def describe_device(raw: Dict[str, Any], index: int) -> Dict[str, Any]:
     product_id = int(raw.get("product_id") or 0)
     vendor_id = int(raw.get("vendor_id") or 0)
-    known = next(
-        (item for item in PRODUCTS if item["product"] == product_id and item["vendor"] == vendor_id),
-        None,
-    )
-    name = known["name"] if known else f"Unknown 0x{product_id:04x}"
+    name = roccat_rgb.product_name(product_id) if vendor_id == ROCCAT_VID else f"Unknown 0x{product_id:04x}"
     return {
         "index": index,
         "name": name,
@@ -97,6 +105,7 @@ def describe_device(raw: Dict[str, Any], index: int) -> Dict[str, Any]:
         "release_number": _json_safe(raw.get("release_number")),
         "interface_number": _json_safe(raw.get("interface_number")),
         "path": _json_safe(raw.get("path")),
+        "kind": roccat_rgb.kind_for_product(product_id) if vendor_id == ROCCAT_VID else "unknown",
     }
 
 
@@ -171,44 +180,24 @@ def open_device_by_entry(entry: Dict[str, Any]) -> Any:
     return dev
 
 
-def send_hid_report(dev: Any, report_id: int, data: bytes) -> None:
-    """Write an output report. The first byte is the report id, as hid_write requires."""
-    payload = bytes([report_id & 0xFF]) + bytes(data)
-    written = dev.write(payload)
+def send_feature_report(dev: Any, data: bytes) -> None:
+    written = dev.send_feature_report(data)
     if isinstance(written, int) and written < 0:
-        raise OSError(f"HID write failed for report 0x{report_id:02x}")
+        raise OSError(f"HID feature report 0x{data[0]:02x} failed")
 
 
-def set_kone_aimo_dpi(dev: Any, x: int, y: int) -> Tuple[int, int]:
-    x = max(100, min(16000, int(x)))
-    y = max(100, min(16000, int(y)))
-    data = bytes([
-        0x03,
-        0x04,
-        (x >> 8) & 0xFF, x & 0xFF,
-        (y >> 8) & 0xFF, y & 0xFF,
-    ])
-    send_hid_report(dev, 0x04, data)
-    return x, y
+def write_output_report(dev: Any, data: bytes) -> None:
+    written = dev.write(data)
+    if isinstance(written, int) and written < 0:
+        raise OSError("HID output report failed")
 
 
-def set_kone_aimo_led(dev: Any, enabled: bool, brightness: int = 255) -> int:
-    brightness = max(0, min(255, int(brightness)))
-    state = 0x01 if enabled else 0x00
-    data = bytes([0x07, state, brightness])
-    send_hid_report(dev, 0x04, data)
-    return brightness
-
-
-def set_vulcan_key_rgb(dev: Any, row: int, col: int, r: int, g: int, b: int) -> Tuple[int, int, int, int, int]:
-    row = max(0, min(5, int(row)))
-    col = max(0, min(20, int(col)))
-    r = max(0, min(255, int(r)))
-    g = max(0, min(255, int(g)))
-    b = max(0, min(255, int(b)))
-    data = bytes([0x0B, row, col, r, g, b])
-    send_hid_report(dev, 0x04, data)
-    return row, col, r, g, b
+def _init_delay() -> float:
+    raw = os.environ.get("ROCCAT_AIMO_INIT_DELAY", "0.2")
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 0.2
 
 
 def read_device_state(dev: Any) -> Dict[str, Any]:
@@ -222,8 +211,33 @@ def read_device_state(dev: Any) -> Dict[str, Any]:
     return state
 
 
+def grouped_devices() -> List[Dict[str, Any]]:
+    """One controller entry per physical device, with every HID interface attached."""
+    groups: List[Dict[str, Any]] = []
+    index_by_key: Dict[Tuple[int, int, str], int] = {}
+    for raw in list_roccat_devices():
+        vendor_id = int(raw.get("vendor_id") or 0)
+        product_id = int(raw.get("product_id") or 0)
+        serial = _json_safe(raw.get("serial_number")) or ""
+        key = (vendor_id, product_id, serial)
+        interface = {
+            "interface_number": raw.get("interface_number"),
+            "path": _json_safe(raw.get("path")),
+            "vendor_id": vendor_id,
+            "product_id": product_id,
+        }
+        if key not in index_by_key:
+            index_by_key[key] = len(groups)
+            described = describe_device(raw, len(groups))
+            described["interfaces"] = [interface]
+            groups.append(described)
+            continue
+        groups[index_by_key[key]]["interfaces"].append(interface)
+    return groups
+
+
 def _described_devices() -> List[Dict[str, Any]]:
-    return [describe_device(raw, index) for index, raw in enumerate(list_roccat_devices())]
+    return grouped_devices()
 
 
 def _persist_described(devices: List[Dict[str, Any]]) -> None:
@@ -262,7 +276,7 @@ def handle_bridge(_: argparse.Namespace) -> int:
 
 
 def _pick_device(index: int) -> Optional[Dict[str, Any]]:
-    devices = list_roccat_devices()
+    devices = grouped_devices()
     if not devices:
         print("No Roccat devices found.", file=sys.stderr)
         return None
@@ -273,6 +287,131 @@ def _pick_device(index: int) -> Optional[Dict[str, Any]]:
         )
         return None
     return devices[index]
+
+
+def _open_interfaces(group: Dict[str, Any], interface_number: Optional[int] = None) -> List[Dict[str, Any]]:
+    interfaces = list(group.get("interfaces") or [])
+    if interface_number is None:
+        return interfaces
+    return [item for item in interfaces if item.get("interface_number") == interface_number]
+
+
+def _color_key(group: Dict[str, Any]) -> str:
+    serial = group.get("serial_number") or ""
+    return f"{int(group.get('vendor_id') or 0):04x}:{int(group.get('product_id') or 0):04x}:{serial}"
+
+
+def _load_colors(group: Dict[str, Any], count: int) -> List[Tuple[int, int, int]]:
+    maps = load_state().get("color_maps") or {}
+    current = maps.get(_color_key(group))
+    if (
+        isinstance(current, list)
+        and len(current) == count
+        and all(isinstance(item, list) and len(item) == 3 for item in current)
+    ):
+        return [tuple(int(channel) for channel in item) for item in current]  # type: ignore[misc]
+    return [(0, 0, 0)] * count
+
+
+def _save_colors(group: Dict[str, Any], colors: Sequence[Tuple[int, int, int]]) -> None:
+    state = load_state()
+    maps = dict(state.get("color_maps") or {})
+    maps[_color_key(group)] = [list(color) for color in colors]
+    state["color_maps"] = maps
+    save_state(state)
+
+
+def _apply_color_map(
+    group: Dict[str, Any],
+    color: Tuple[int, int, int],
+    led: Optional[int],
+) -> List[Tuple[int, int, int]]:
+    kind = group.get("kind")
+    count = roccat_rgb.KONE_LED_COUNT if kind == "kone" else roccat_rgb.VULCAN_KEY_COUNT
+    colors = _load_colors(group, count)
+    if led is None:
+        return [color] * count
+    if led < 0 or led >= count:
+        raise ValueError(f"Light index {led} is out of range (0..{count - 1}).")
+    colors[led] = color
+    return colors
+
+
+def _send_kone_colors(group: Dict[str, Any], colors: Sequence[Tuple[int, int, int]]) -> None:
+    report = roccat_rgb.kone_color_report(colors)
+    errors: List[str] = []
+    for interface in _open_interfaces(group):
+        try:
+            dev = open_device_by_entry(interface)
+        except Exception as exc:
+            errors.append(str(exc))
+            continue
+        try:
+            dev.get_feature_report(0x04, 3)
+            send_feature_report(dev, roccat_rgb.KONE_INIT_REPORT)
+            send_feature_report(dev, roccat_rgb.KONE_INIT_REPORT)
+            send_feature_report(dev, report)
+            dev.get_feature_report(0x04, 3)
+            return
+        except Exception as exc:
+            errors.append(str(exc))
+        finally:
+            try:
+                dev.close()
+            except Exception:
+                pass
+    detail = "; ".join(errors) if errors else "no HID interface"
+    raise OSError(f"could not set Kone AIMO LEDs: {detail}")
+
+
+def _send_vulcan_colors(group: Dict[str, Any], colors: Sequence[Tuple[int, int, int]]) -> None:
+    ready_key = _color_key(group)
+    if ready_key not in _vulcan_ready:
+        ctrl_interfaces = _open_interfaces(group, roccat_rgb.VULCAN_CTRL_INTERFACE)
+        if not ctrl_interfaces:
+            raise OSError("Vulcan control interface 1 was not found")
+        dev = open_device_by_entry(ctrl_interfaces[0])
+        try:
+            delay = _init_delay()
+            for report in roccat_rgb.VULCAN_INIT_REPORTS:
+                send_feature_report(dev, report)
+                if delay:
+                    time.sleep(delay)
+        finally:
+            try:
+                dev.close()
+            except Exception:
+                pass
+        _vulcan_ready.add(ready_key)
+    led_interfaces = _open_interfaces(group, roccat_rgb.VULCAN_LED_INTERFACE)
+    if not led_interfaces:
+        raise OSError("Vulcan LED interface 3 was not found")
+    dev = open_device_by_entry(led_interfaces[0])
+    try:
+        for packet in roccat_rgb.vulcan_led_packets(colors):
+            write_output_report(dev, packet)
+    finally:
+        try:
+            dev.close()
+        except Exception:
+            pass
+
+
+def paint_device(group: Dict[str, Any], color: Tuple[int, int, int], led: Optional[int]) -> str:
+    kind = group.get("kind")
+    colors = _apply_color_map(group, color, led)
+    if kind == "kone":
+        _send_kone_colors(group, colors)
+        target = "all 11 LEDs" if led is None else roccat_rgb.KONE_LED_NAMES[led]
+    elif kind == "vulcan":
+        _send_vulcan_colors(group, colors)
+        target = "all 144 keys" if led is None else f"key {led}"
+    else:
+        product = int(group.get("product_id") or 0)
+        raise OSError(f"No RGB controller for product 0x{product:04x}")
+    _save_colors(group, colors)
+    red, green, blue = color
+    return f"RGB {red},{green},{blue} on {group.get('name')} {target}"
 
 
 def _run_on_device(index: int, action: Any) -> int:
@@ -297,31 +436,33 @@ def _run_on_device(index: int, action: Any) -> int:
 
 
 def handle_dpi(args: argparse.Namespace) -> int:
-    def action(dev: Any) -> int:
-        x, y = set_kone_aimo_dpi(dev, args.x, args.y)
-        print(f"DPI set to {x}/{y} on index {args.index}")
-        return 0
+    if _pick_device(args.index) is None:
+        return 1
+    print("DPI control is not part of the RGB controller.", file=sys.stderr)
+    return 2
 
-    return _run_on_device(args.index, action)
+
+def _paint_from_args(args: argparse.Namespace, color: Tuple[int, int, int], led: Optional[int]) -> int:
+    group = _pick_device(args.index)
+    if group is None:
+        return 1
+    try:
+        print(paint_device(group, color, led))
+    except Exception as exc:
+        print(f"ERROR: device command failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def handle_led(args: argparse.Namespace) -> int:
-    def action(dev: Any) -> int:
-        brightness = set_kone_aimo_led(dev, bool(args.on), args.brightness)
-        state = "ON" if args.on else "OFF"
-        print(f"LED {state} at {brightness} on index {args.index}")
-        return 0
-
-    return _run_on_device(args.index, action)
+    brightness = roccat_rgb.clamp_channel(args.brightness)
+    color = (brightness, brightness, brightness) if args.on else (0, 0, 0)
+    return _paint_from_args(args, color, None)
 
 
 def handle_rgb(args: argparse.Namespace) -> int:
-    def action(dev: Any) -> int:
-        row, col, r, g, b = set_vulcan_key_rgb(dev, args.row, args.col, args.r, args.g, args.b)
-        print(f"RGB set to {r},{g},{b} at row={row} col={col}")
-        return 0
-
-    return _run_on_device(args.index, action)
+    color = roccat_rgb.scale_color(args.r, args.g, args.b, args.brightness)
+    return _paint_from_args(args, color, args.led)
 
 
 def handle_poll(args: argparse.Namespace) -> int:
@@ -340,24 +481,24 @@ def build_parser() -> argparse.ArgumentParser:
     list_p.add_argument("--json", action="store_true", help="Print devices as a JSON array")
     list_p.set_defaults(func=handle_list)
 
-    dpi_p = sub.add_parser("dpi", help="Set DPI on Kone AIMO")
+    dpi_p = sub.add_parser("dpi", help="DPI changes are not implemented")
     dpi_p.add_argument("x", type=int)
     dpi_p.add_argument("y", type=int)
     dpi_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")
     dpi_p.set_defaults(func=handle_dpi)
 
-    led_p = sub.add_parser("led", help="Toggle LED on Kone AIMO")
+    led_p = sub.add_parser("led", help="Turn every light on (white) or off")
     led_p.add_argument("on", type=int, choices=[0, 1])
     led_p.add_argument("--brightness", type=int, default=255)
     led_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")
     led_p.set_defaults(func=handle_led)
 
-    rgb_p = sub.add_parser("rgb", help="Set per-key RGB on Vulcan AIMO")
-    rgb_p.add_argument("row", type=int)
-    rgb_p.add_argument("col", type=int)
+    rgb_p = sub.add_parser("rgb", help="Set RGB on a Kone AIMO or Vulcan AIMO")
     rgb_p.add_argument("r", type=int)
     rgb_p.add_argument("g", type=int)
     rgb_p.add_argument("b", type=int)
+    rgb_p.add_argument("--led", type=int, default=None, help="One Kone LED (0-10) or Vulcan key (0-143)")
+    rgb_p.add_argument("--brightness", type=int, default=255, help="Scale the color, 0-255")
     rgb_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")
     rgb_p.set_defaults(func=handle_rgb)
 

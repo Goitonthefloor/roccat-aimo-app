@@ -12,8 +12,8 @@ Userspace bridge for **Roccat Kone AIMO** and **Vulcan AIMO** on Linux.
 
 ## Supported Devices
 
-- Roccat Kone AIMO
-- Roccat Vulcan AIMO family
+- Roccat Kone AIMO (`1e7d:2e27`), 11 LEDs
+- Roccat Vulcan 100 AIMO (`1e7d:307a`) and Vulcan 120 AIMO (`1e7d:3098`), 144 keys
 
 ## Install
 
@@ -81,12 +81,14 @@ systemctl --user enable --now roccat-aimo-bridge.service
 
 `list` prints a zero-based index. Pass that index to the other commands with `--index`.
 
+`rgb` paints a Kone AIMO (11 LEDs) or Vulcan 100/120 AIMO (144 keys). `--led` changes one light and leaves the others as they were.
+
 ```bash
 roccat-aimo-cli list
 roccat-aimo-cli list --json
-roccat-aimo-cli dpi 1600 1600 --index 0
-roccat-aimo-cli led 1 --brightness 255 --index 0
-roccat-aimo-cli rgb 0 0 255 0 0 --index 0
+roccat-aimo-cli rgb 255 0 0 --index 0
+roccat-aimo-cli rgb 0 255 0 --led 0 --brightness 180 --index 0
+roccat-aimo-cli led 0 --index 0
 roccat-aimo-cli poll --index 0
 ```
 
