@@ -5,6 +5,8 @@ import argparse
 import json
 import os
 import signal
+import tempfile
+import math
 import sys
 import time
 from pathlib import Path
@@ -39,7 +41,7 @@ def state_path() -> Path:
     override = os.environ.get("ROCCAT_AIMO_STATE")
     if override:
         return Path(override)
-    return Path.home() / ".local" / "state" / "roccat-aimo" / "devices.json"
+    return Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))) / "roccat-aimo" / "devices.json"
 
 
 def require_hid() -> Any:
@@ -81,7 +83,15 @@ def load_state() -> Dict[str, Any]:
 
 def save_state(state: Dict[str, Any]) -> None:
     ensure_state_dir()
-    state_path().write_text(json.dumps(state, indent=2) + "\n")
+    path = state_path()
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as file:
+        temporary = Path(file.name)
+        json.dump(state, file, indent=2)
+        file.write("\n")
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _json_safe(value: Any) -> Any:
@@ -97,6 +107,7 @@ def describe_device(raw: Dict[str, Any], index: int) -> Dict[str, Any]:
     vendor_id = int(raw.get("vendor_id") or 0)
     name = roccat_rgb.product_name(product_id) if vendor_id == ROCCAT_VID else f"Unknown 0x{product_id:04x}"
     return {
+        "serial_number": _json_safe(raw.get("serial_number")),
         "index": index,
         "name": name,
         "vendor_id": vendor_id,
@@ -171,6 +182,9 @@ def open_device_by_entry(entry: Dict[str, Any]) -> Any:
                 dev.close()
             except Exception:
                 pass
+    if candidates:
+        raise OSError("could not open the selected HID interface: " + "; ".join(errors)
+                      + ". Install the host udev rules and reconnect the device.")
     dev = hid.device()
     try:
         dev.open(int(entry["vendor_id"]), int(entry["product_id"]))
@@ -183,13 +197,13 @@ def open_device_by_entry(entry: Dict[str, Any]) -> Any:
 
 def send_feature_report(dev: Any, data: bytes) -> None:
     written = dev.send_feature_report(data)
-    if isinstance(written, int) and written < 0:
+    if isinstance(written, int) and written != len(data):
         raise OSError(f"HID feature report 0x{data[0]:02x} failed")
 
 
 def write_output_report(dev: Any, data: bytes) -> None:
     written = dev.write(data)
-    if isinstance(written, int) and written < 0:
+    if isinstance(written, int) and written != len(data):
         raise OSError("HID output report failed")
 
 
@@ -212,6 +226,18 @@ def read_device_state(dev: Any) -> Dict[str, Any]:
     return state
 
 
+def physical_id(raw: Dict[str, Any]) -> str:
+    path = os.fsdecode(raw.get("path") or "")
+    if path.startswith("/dev/hidraw"):
+        device = Path("/sys/class/hidraw") / Path(path).name / "device"
+        for parent in device.resolve().parents:
+            if (parent / "idVendor").exists() and (parent / "idProduct").exists():
+                return parent.name
+    if path.count(":") == 2 and not path.startswith("/dev/"):
+        return path.rsplit(":", 1)[0]
+    return str(raw.get("serial_number") or "")
+
+
 def grouped_devices() -> List[Dict[str, Any]]:
     """One controller entry per physical device, with every HID interface attached."""
     groups: List[Dict[str, Any]] = []
@@ -219,7 +245,7 @@ def grouped_devices() -> List[Dict[str, Any]]:
     for raw in list_roccat_devices():
         vendor_id = int(raw.get("vendor_id") or 0)
         product_id = int(raw.get("product_id") or 0)
-        serial = _json_safe(raw.get("serial_number")) or ""
+        serial = physical_id(raw)
         key = (vendor_id, product_id, serial)
         interface = {
             "interface_number": raw.get("interface_number"),
@@ -230,6 +256,7 @@ def grouped_devices() -> List[Dict[str, Any]]:
         if key not in index_by_key:
             index_by_key[key] = len(groups)
             described = describe_device(raw, len(groups))
+            described["physical_id"] = serial
             described["interfaces"] = [interface]
             groups.append(described)
             continue
@@ -298,17 +325,19 @@ def _open_interfaces(group: Dict[str, Any], interface_number: Optional[int] = No
 
 
 def _color_key(group: Dict[str, Any]) -> str:
-    serial = group.get("serial_number") or ""
+    serial = group.get("physical_id") or group.get("serial_number") or ""
     return f"{int(group.get('vendor_id') or 0):04x}:{int(group.get('product_id') or 0):04x}:{serial}"
 
 
 def _load_colors(group: Dict[str, Any], count: int) -> List[Tuple[int, int, int]]:
     maps = load_state().get("color_maps") or {}
-    current = maps.get(_color_key(group))
+    current = maps.get(_color_key(group)) if isinstance(maps, dict) else None
     if (
         isinstance(current, list)
         and len(current) == count
-        and all(isinstance(item, list) and len(item) == 3 for item in current)
+        and all(isinstance(item, list) and len(item) == 3
+                and all(isinstance(channel, int) and 0 <= channel <= 255 for channel in item)
+                for item in current)
     ):
         return [tuple(int(channel) for channel in item) for item in current]  # type: ignore[misc]
     return [(0, 0, 0)] * count
@@ -446,11 +475,20 @@ def handle_effect(args: argparse.Namespace) -> int:
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
+    reader = None
+    if args.name == "reactive":
+        if kind != "vulcan":
+            raise ValueError("Light by Push requires a supported Vulcan keyboard")
+        from roccat_input import KeyPressReader
+        reader = KeyPressReader(group)
+    last_press = None
     frame = 0
     limit = args.frames
     try:
         while limit <= 0 or frame < limit:
             started = time.monotonic()
+            if reader is not None and reader.pressed():
+                last_press = frame
             colors = roccat_rgb.effect_colors(
                 args.name,
                 args.r,
@@ -460,6 +498,7 @@ def handle_effect(args: argparse.Namespace) -> int:
                 frame,
                 count,
                 roccat_rgb.clamp_speed(args.speed),
+                args.bpm, args.reverse, last_press,
             )
             _send_colors(group, colors)
             preview = colors[0]
@@ -472,6 +511,9 @@ def handle_effect(args: argparse.Namespace) -> int:
                 time.sleep(remaining)
     except KeyboardInterrupt:
         return 0
+    finally:
+        if reader is not None:
+            reader.close()
     return 0
 
 
@@ -534,6 +576,20 @@ def handle_poll(args: argparse.Namespace) -> int:
     return _run_on_device(args.index, action)
 
 
+def finite_speed(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or not 0.25 <= number <= 4:
+        raise argparse.ArgumentTypeError("speed must be between 0.25 and 4")
+    return number
+
+
+def beat_tempo(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or not 30 <= number <= 240:
+        raise argparse.ArgumentTypeError("BPM must be between 30 and 240")
+    return number
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="roccat-aimo-cli", description="Roccat AIMO CLI")
     sub = parser.add_subparsers(dest="command")
@@ -569,9 +625,11 @@ def build_parser() -> argparse.ArgumentParser:
     effect_p.add_argument("g", type=int)
     effect_p.add_argument("b", type=int)
     effect_p.add_argument("--brightness", type=int, default=255, help="Scale the color, 0-255")
-    effect_p.add_argument("--speed", type=float, default=1.0, help="0.25 to 4")
+    effect_p.add_argument("--speed", type=finite_speed, default=1.0, help="0.25 to 4")
     effect_p.add_argument("--frames", type=int, default=0, help="Stop after this many frames; 0 runs until interrupted")
     effect_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")
+    effect_p.add_argument("--bpm", type=beat_tempo, default=120, help="Beat tempo, 30–240 BPM (multiplied by speed)")
+    effect_p.add_argument("--reverse", action="store_true", help="Reverse flow direction")
     effect_p.set_defaults(func=handle_effect)
 
     poll_p = sub.add_parser("poll", help="Read HID report")
@@ -616,7 +674,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.command:
         parser.print_help()
         return 0
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

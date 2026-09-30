@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -260,13 +261,12 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("out of range", stderr.getvalue())
         self.assertEqual(self.fake.created, [])
 
-    def test_open_falls_back_to_vendor_product_when_path_fails(self):
+    def test_failed_path_never_opens_a_different_device(self):
         self.fake.fail_open_path = True
-        with contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stderr(io.StringIO()):
             code = bridge.main(["poll", "--index", "0"])
-        self.assertEqual(code, 0)
-        opened = [dev.opened for dev in self.fake.created]
-        self.assertIn(("ids", 0x1E7D, 0x2E27), opened)
+        self.assertEqual(code, 1)
+        self.assertFalse(any(dev.opened for dev in self.fake.created))
 
     def test_write_error_is_reported(self):
         self.fake.fail_write = True
@@ -350,15 +350,52 @@ class BridgeTests(unittest.TestCase):
 
         env = os.environ.copy()
         env["ROCCAT_AIMO_STATE"] = str(Path(self.tmp.name) / "live.json")
+        fake_module = Path(self.tmp.name) / "hid.py"
+        fake_module.write_text("def enumerate(): return []\n")
+        (Path(self.tmp.name) / "hidraw.py").write_text("def enumerate(): return []\n")
+        env["PYTHONPATH"] = self.tmp.name
         list_proc = subprocess.run(
             [sys.executable, str(ROOT / "src" / "roccat_aimo_bridge.py"), "list", "--json"],
-            text=True,
-            capture_output=True,
-            check=False,
-            env=env,
+            text=True, capture_output=True, check=False, env=env,
         )
         self.assertEqual(list_proc.returncode, 1, list_proc.stderr)
         self.assertEqual(json.loads(list_proc.stdout), [])
+
+    def test_short_writes_fail(self):
+        device = mock.Mock()
+        device.write.return_value = 1
+        device.send_feature_report.return_value = 1
+        with self.assertRaises(OSError):
+            bridge.write_output_report(device, b"abc")
+        with self.assertRaises(OSError):
+            bridge.send_feature_report(device, b"abc")
+
+    def test_two_serialless_devices_keep_separate_interfaces(self):
+        self.fake.devices = [dict(kone_device(), path=path, interface_number=i)
+                             for path, i in [(b"001:002:01", 1), (b"001:002:03", 3),
+                                             (b"001:003:01", 1), (b"001:003:03", 3)]]
+        groups = bridge.grouped_devices()
+        self.assertEqual(len(groups), 2)
+        self.assertEqual([len(g["interfaces"]) for g in groups], [2, 2])
+        self.assertNotEqual(bridge._color_key(groups[0]), bridge._color_key(groups[1]))
+
+    def test_malformed_color_state_is_ignored(self):
+        group = bridge.grouped_devices()[0]
+        for payload in [[], {bridge._color_key(group): [["invalid", 0, 0]] * 11}]:
+            bridge.save_state({"color_maps": payload})
+            self.assertEqual(bridge._load_colors(group, 11), [(0, 0, 0)] * 11)
+
+    def test_effect_hid_failure_has_no_traceback(self):
+        self.fake.fail_write = True
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(bridge.main(["effect", "wave", "255", "0", "0", "--frames", "1"]), 1)
+        self.assertIn("ERROR", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
+    def test_invalid_effect_controls_rejected(self):
+        for option, value in [("--speed", "nan"), ("--speed", "inf"), ("--bpm", "0")]:
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                bridge.build_parser().parse_args(["effect", "beat", "1", "2", "3", option, value])
 
     def test_missing_hid_module_fails_cleanly(self):
         code = r"""

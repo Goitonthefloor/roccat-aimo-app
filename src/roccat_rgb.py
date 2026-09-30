@@ -107,7 +107,10 @@ def vulcan_led_packets(colors: Sequence[Color]) -> List[bytes]:
         packets.append(bytes([0x00]) + chunk.ljust(64, b"\x00"))
     return packets
 
-EFFECTS = ("pulse", "breathe", "rainbow")
+EFFECTS = ("pulse", "breathe", "rainbow", "rainbow-flow", "wave", "cycle", "beat", "reactive")
+EFFECT_LABELS = {"pulse": "Pulse", "breathe": "Breathe", "rainbow": "Rainbow",
+                 "rainbow-flow": "Rainbow Flow", "wave": "Color wave", "cycle": "Color cycle",
+                 "beat": "Beat", "reactive": "Light by Push"}
 EFFECT_FPS = 12
 PULSE_PERIOD = 24
 BREATHE_PERIOD = 72
@@ -156,15 +159,32 @@ def effect_colors(
     frame: int,
     count: int,
     speed: float = 1.0,
+    bpm: float = 120.0,
+    reverse: bool = False,
+    last_press: float | None = None,
 ) -> List[Color]:
     """One animation frame for every light on the device."""
     if name not in EFFECTS:
         raise ValueError(f"Unknown effect {name}")
     if count < 1:
         raise ValueError("Effect needs at least one light")
-    if name == "rainbow":
+    if name == "reactive":
+        age = float("inf") if last_press is None else max(0, frame - last_press) / EFFECT_FPS
+        amount = max(0.0, 1.0 - age * clamp_speed(speed))
+        return [scale_color(red, green, blue, int(brightness * amount))] * count
+    if name == "beat":
+        phase = (frame / EFFECT_FPS * bpm / 60 * clamp_speed(speed)) % 1
+        return [scale_color(red, green, blue, int(brightness * (1 - phase) ** 3))] * count
+    if name in ("rainbow", "rainbow-flow", "cycle", "wave"):
         phase = _phase(frame, RAINBOW_PERIOD, speed)
+        if reverse:
+            phase = -phase
         level = clamp_channel(brightness)
+        if name == "cycle":
+            return [hsv_to_rgb(phase, level)] * count
+        if name == "wave":
+            return [scale_color(red, green, blue, int(level * envelope_breathe(phase + index / count)))
+                    for index in range(count)]
         return [hsv_to_rgb(phase + index / count, level) for index in range(count)]
     period = PULSE_PERIOD if name == "pulse" else BREATHE_PERIOD
     envelope = envelope_pulse if name == "pulse" else envelope_breathe

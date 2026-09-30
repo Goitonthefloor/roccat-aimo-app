@@ -2,6 +2,8 @@
 """Roccat AIMO GTK4 RGB controller."""
 
 import importlib.util
+import importlib.machinery
+import threading
 import os
 import shlex
 import shutil
@@ -88,7 +90,8 @@ def _load_bridge():
     for path in candidates:
         if not path.is_file():
             continue
-        spec = importlib.util.spec_from_file_location("roccat_aimo_bridge", path)
+        spec = importlib.util.spec_from_file_location("roccat_aimo_bridge", path,
+            loader=importlib.machinery.SourceFileLoader("roccat_aimo_bridge", str(path)))
         if spec is None or spec.loader is None:
             continue
         module = importlib.util.module_from_spec(spec)
@@ -117,6 +120,7 @@ def run_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
         text=True,
         capture_output=True,
         check=False,
+        timeout=15,
     )
 
 
@@ -144,7 +148,10 @@ class RoccatGui(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Roccat AIMO RGB")
         self.set_default_size(960, 640)
-        self.selected_index = 0
+        self.selected_index = None
+        self._busy = False
+        self._closed = False
+        self._preview_colors = [(0, 0, 0)] * 144
         self._selected_kind = ""
         self._updating_color = False
         self._effect_name = None
@@ -235,6 +242,11 @@ class RoccatGui(Adw.ApplicationWindow):
         self.swatch.set_size_request(-1, 72)
         self.swatch.set_hexpand(True)
         content.append(self.swatch)
+        self.led_preview = Gtk.DrawingArea()
+        self.led_preview.set_content_height(96)
+        self.led_preview.set_draw_func(self._draw_lights)
+        self.led_preview.set_tooltip_text("LED sequence preview; not a physical keyboard layout")
+        content.append(self.led_preview)
 
         readout = Gtk.Box(spacing=12)
         readout.set_halign(Gtk.Align.CENTER)
@@ -270,9 +282,10 @@ class RoccatGui(Adw.ApplicationWindow):
             presets.append(self._preset_button(label, color, css))
         content.append(presets)
 
-        effects = Gtk.Box(spacing=8, homogeneous=True)
+        effects = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
+                              column_spacing=8, row_spacing=8, max_children_per_line=4)
         for name in roccat_rgb.EFFECTS:
-            button = Gtk.Button(label=name.capitalize())
+            button = Gtk.Button(label=roccat_rgb.EFFECT_LABELS[name])
             button.add_css_class("pill")
             button.connect("clicked", lambda _, chosen=name: self.start_effect(chosen))
             self._effect_buttons[name] = button
@@ -287,7 +300,19 @@ class RoccatGui(Adw.ApplicationWindow):
         self.speed_value = self._add_channel(
             speed_group, "Speed", self.speed, format_value=self._format_speed, value_width=48
         )
+        self.bpm = Adw.SpinRow.new_with_range(30, 240, 1)
+        self.bpm.set_title("Beat tempo · BPM")
+        self.bpm.set_subtitle("Beat mode; multiplied by Speed")
+        self.bpm.set_value(120)
+        self.bpm.connect("notify::value", lambda *_: self._settings_changed())
+        speed_group.add(self.bpm)
+        self.reverse = Adw.SwitchRow(title="Reverse flow")
+        self.reverse.connect("notify::active", lambda *_: self._settings_changed())
+        speed_group.add(self.reverse)
         content.append(speed_group)
+        hint = Gtk.Label(label="Light by Push: whole-keyboard flash on key press. Host input permission required.", xalign=0, wrap=True)
+        hint.add_css_class("dim-label")
+        content.append(hint)
 
         color_group = Adw.PreferencesGroup(title="Color")
         self.red_value = self._add_channel(color_group, "Red", self.r)
@@ -352,6 +377,55 @@ class RoccatGui(Adw.ApplicationWindow):
         self.connect("close-request", self._on_close)
         self._sync_preview()
         self._sync_zone_hint()
+        self._actions = actions
+        self._effects_widget = effects
+        self._set_controls()
+
+    def _set_controls(self):
+        enabled = self.selected_index is not None and not self._busy
+        self._actions.set_sensitive(enabled)
+        self._effects_widget.set_sensitive(enabled)
+        self.devices_store.set_sensitive(not self._busy)
+        self.refresh_btn.set_sensitive(not self._busy)
+        self._effect_buttons["reactive"].set_sensitive(self._selected_kind == "vulcan")
+
+    def _settings_changed(self):
+        if self._effect_name:
+            self._schedule_effect_respawn()
+
+    def _draw_lights(self, area, cr, width, height):
+        colors = self._preview_colors
+        columns = 24 if len(colors) > 11 else 11
+        rows = (len(colors) + columns - 1) // columns
+        for index, (r, g, b) in enumerate(colors):
+            cr.set_source_rgb(r / 255, g / 255, b / 255)
+            cr.rectangle((index % columns) * width / columns + 2,
+                         (index // columns) * height / rows + 2,
+                         max(1, width / columns - 4), max(1, height / rows - 4))
+            cr.fill()
+
+    def _run_command(self, args, callback):
+        if self._busy:
+            return
+        self._busy = True
+        self._set_controls()
+        self._set_status("Working…")
+        def done(result):
+            self._busy = False
+            if not self._closed:
+                self._set_controls()
+                if isinstance(result, Exception):
+                    self._set_status(str(result))
+                else:
+                    callback(result)
+            return False
+        def worker():
+            try:
+                result = run_cli(args)
+            except Exception as exc:
+                result = exc
+            GLib.idle_add(done, result)
+        threading.Thread(target=worker, daemon=True).start()
 
     def _install_css(self) -> None:
         display = Gdk.Display.get_default()
@@ -475,6 +549,8 @@ class RoccatGui(Adw.ApplicationWindow):
         else:
             percent = round(brightness * 100 / 255)
             self.preview_detail.set_label(f"Brightness {percent}% · device receives {device_hex}")
+        self._preview_colors = [sent] * (11 if self._selected_kind == "kone" else 144)
+        self.led_preview.queue_draw()
         if self._swatch_css is not None:
             self._swatch_css.load_from_string(
                 ".rgb-swatch { background-color: " + device_hex + "; }"
@@ -518,13 +594,16 @@ class RoccatGui(Adw.ApplicationWindow):
             self.devices_store.remove(row)
 
     def load_devices(self) -> None:
-        self._clear_rows()
-        try:
-            proc = run_cli(["list", "--json"])
-        except Exception as exc:
-            self.empty_hint.set_visible(True)
-            self._set_status(f"Device scan failed: {exc}")
+        if self._busy:
             return
+        self.stop_effect(restore=False)
+        self.selected_index = None
+        self._selected_kind = ""
+        self._clear_rows()
+        self._set_controls()
+        self._run_command(["list", "--json"], self._devices_loaded)
+
+    def _devices_loaded(self, proc):
         devices, error = _load_bridge().parse_device_json(proc.stdout, proc.returncode, proc.stderr)
         if error:
             self.empty_hint.set_visible(True)
@@ -554,6 +633,7 @@ class RoccatGui(Adw.ApplicationWindow):
             self.select_device(row)
 
     def select_device(self, row) -> None:
+        self.stop_effect(restore=False)
         self.selected_index = row.index
         self.devices_store.select_row(row)
         pid = int(row.device.get("product_id") or 0)
@@ -572,6 +652,8 @@ class RoccatGui(Adw.ApplicationWindow):
         title = row.device.get("name") or row.device.get("product_string") or row.get_title()
         self.device_title.set_label(str(title))
         self.device_subtitle.set_label(row.get_subtitle() or "")
+        self._set_controls()
+        self._sync_preview()
         self._set_status(f"Selected: {title}")
 
     def _report(self, proc: subprocess.CompletedProcess[str], success: str) -> None:
@@ -598,6 +680,7 @@ class RoccatGui(Adw.ApplicationWindow):
         return args
 
     def _on_close(self, *_args) -> bool:
+        self._closed = True
         self.stop_effect(restore=False)
         return False
 
@@ -609,6 +692,9 @@ class RoccatGui(Adw.ApplicationWindow):
                 button.remove_css_class("suggested-action")
 
     def _effect_args(self) -> list[str]:
+        return self._base_effect_args() + (["--reverse"] if self.reverse.get_active() else [])
+
+    def _base_effect_args(self) -> list[str]:
         return [
             "effect",
             self._effect_name or "breathe",
@@ -619,6 +705,7 @@ class RoccatGui(Adw.ApplicationWindow):
             str(int(self.brightness.get_value())),
             "--speed",
             f"{self._effect_speed():.2f}",
+            "--bpm", str(int(self.bpm.get_value())),
             "--index",
             str(self.selected_index),
         ]
@@ -634,6 +721,13 @@ class RoccatGui(Adw.ApplicationWindow):
         self._effect_proc = None
         if proc is not None and proc.poll() is None:
             proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        if proc is not None and proc.stderr:
+            proc.stderr.close()
 
     def _spawn_effect_process(self) -> None:
         self._stop_effect_process()
@@ -647,24 +741,27 @@ class RoccatGui(Adw.ApplicationWindow):
                 text=True,
             )
         except Exception as exc:
+            self.stop_effect(restore=False)
             self._set_status(f"Effect error: {exc}")
             return
         self._effect_proc = proc
         generation = self._effect_gen
 
-        def exited(pid, status, gen=generation):
-            if gen != self._effect_gen:
+        def check_exit():
+            if generation != self._effect_gen:
                 return False
-            current = self._effect_proc
-            err = ""
-            if current is not None and current.pid == pid:
-                err = ((current.stderr.read() if current.stderr else "") or "").strip()
-                self._effect_proc = None
-            if self._effect_name and os.WIFEXITED(status) and os.WEXITSTATUS(status) != 0:
-                self._set_status(err.splitlines()[-1] if err else "Effect stopped")
+            if proc.poll() is None:
+                return True
+            err = (proc.stderr.read() if proc.stderr else "").strip()
+            if proc.stderr:
+                proc.stderr.close()
+            self._effect_proc = None
+            self.stop_effect(restore=False)
+            self._sync_preview()
+            self._set_status(err or "Effect stopped")
             return False
 
-        GLib.child_watch_add(proc.pid, exited)
+        GLib.timeout_add(100, check_exit)
 
     def _schedule_effect_respawn(self) -> None:
         if self._effect_restart is not None:
@@ -691,23 +788,30 @@ class RoccatGui(Adw.ApplicationWindow):
             self._effect_frame,
             count,
             self._effect_speed(),
+            self.bpm.get_value(), self.reverse.get_active(),
         )
+        self._preview_colors = colors
+        self.led_preview.queue_draw()
         self._effect_frame += 1
         red, green, blue = colors[0]
         shown = f"#{red:02X}{green:02X}{blue:02X}"
-        self.preview_detail.set_label(f"{self._effect_name.capitalize()} · {shown}")
+        self.preview_detail.set_label("Waiting for keyboard input · hardware preview only" if self._effect_name == "reactive"
+                                      else f"{roccat_rgb.EFFECT_LABELS[self._effect_name]} · {shown}")
         if self._swatch_css is not None:
             self._swatch_css.load_from_string(".rgb-swatch { background-color: " + shown + "; }")
         return True
 
     def start_effect(self, name: str) -> None:
+        if self.selected_index is None or self._busy:
+            return
         self.stop_effect(restore=False)
         self._effect_name = name
         self._effect_frame = 0
         self._highlight_effect(name)
         self._effect_source = GLib.timeout_add(84, self._effect_tick)
         self._spawn_effect_process()
-        self._set_status(f"{name.capitalize()} running")
+        if self._effect_proc is not None:
+            self._set_status(f"{roccat_rgb.EFFECT_LABELS[name]} running")
 
     def stop_effect(self, restore: bool = True) -> None:
         was_running = self._effect_name is not None
@@ -732,22 +836,17 @@ class RoccatGui(Adw.ApplicationWindow):
         self.apply_all()
 
     def apply_all(self) -> None:
-        self.stop_effect(restore=False)
-        try:
-            proc = run_cli(self._color_args())
-        except Exception as exc:
-            self._set_status(f"RGB error: {exc}")
+        if self.selected_index is None or self._busy:
             return
-        self._report(proc, "RGB applied to all lights")
+        self.stop_effect(restore=False)
+        self._run_command(self._color_args(), lambda proc: self._report(proc, "RGB applied to all lights"))
 
     def apply_one(self) -> None:
-        self.stop_effect(restore=False)
-        try:
-            proc = run_cli(self._color_args(int(self.zone.get_value())))
-        except Exception as exc:
-            self._set_status(f"RGB error: {exc}")
+        if self.selected_index is None or self._busy:
             return
-        self._report(proc, "RGB applied to the selected light")
+        self.stop_effect(restore=False)
+        self._run_command(self._color_args(int(self.zone.get_value())),
+                          lambda proc: self._report(proc, "RGB applied to the selected light"))
 
 
 class RoccatApp(Adw.Application):

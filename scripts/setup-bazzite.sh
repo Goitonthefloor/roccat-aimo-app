@@ -1,27 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-missing=()
-command -v flatpak-builder >/dev/null 2>&1 || missing+=("flatpak-builder")
-command -v flatpak >/dev/null 2>&1 || missing+=("flatpak")
-
-if [ ${#missing[@]} -eq 0 ]; then
-  echo "flatpak and flatpak-builder are already installed."
-  exit 0
-fi
-
-echo "Missing: ${missing[*]}"
-if command -v rpm-ostree >/dev/null 2>&1; then
-  echo "Detected rpm-ostree (Bazzite). Layering packages requires a reboot."
-  sudo rpm-ostree install "${missing[@]}"
-  echo "Done. Bitte reboot einmal durchführen, dann weiter mit dem Flatpak-Build."
-elif command -v dnf >/dev/null 2>&1; then
-  echo "Detected dnf."
-  sudo dnf install -y "${missing[@]}"
-elif command -v apt >/dev/null 2>&1; then
-  echo "Detected apt."
-  sudo apt update && sudo apt install -y "${missing[@]}"
-else
-  echo "Kein bekannter Paketmanager gefunden. Bitte manuell installieren: ${missing[*]}"
-  exit 1
-fi
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+command -v flatpak >/dev/null || { echo "Flatpak is required." >&2; exit 1; }
+# Bazzite has a read-only system image. Use the Builder Flatpak, no layering/reboot.
+flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install --user flathub org.flatpak.Builder
+sudo install -Dm644 etc/udev/70-roccat-aimo.rules /etc/udev/rules.d/70-roccat-aimo.rules
+sudo udevadm control --reload-rules
+echo "Reconnect your Roccat devices after setup so session permissions take effect."
+flatpak run org.flatpak.Builder --user --install --install-deps-from=flathub --force-clean build-dir pkg/flatpak/roccat-aimo.yml
+echo "Start: flatpak run io.github.Goitonthefloor.roccat.aimo"

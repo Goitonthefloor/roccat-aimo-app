@@ -1,0 +1,7 @@
+# Access for the active local desktop session; no world-writable devices.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1e7d", ATTRS{idProduct}=="2e27", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1e7d", ATTRS{idProduct}=="307a", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1e7d", ATTRS{idProduct}=="3098", TAG+="uaccess"
+# Light by Push reads key-down events from supported Vulcan devices only.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="1e7d", ATTRS{idProduct}=="307a", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="1e7d", ATTRS{idProduct}=="3098", TAG+="uaccess"
