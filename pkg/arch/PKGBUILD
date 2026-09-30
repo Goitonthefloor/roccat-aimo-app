@@ -5,7 +5,8 @@ pkgdesc="Userspace bridge for Roccat Kone AIMO / Vulcan AIMO on Linux"
 arch=('any')
 url="https://github.com/Goitonthefloor/roccat-aimo-app"
 license=('MIT')
-depends=('python' 'python-hidapi' 'python-gobject' 'gtk4' 'libadwaita')
+depends=('python' 'python-hidapi' 'python-gobject' 'gtk4>=4.12' 'libadwaita>=1.4')
+makedepends=('git')
 optdepends=(
   'python-gobject: GUI helpers'
   'gtk4: GUI runtime'
@@ -25,6 +26,9 @@ package() {
   install -Dm644 src/roccat-aimo-bridge.service "${pkgdir}/usr/lib/systemd/user/roccat-aimo-bridge.service"
   install -Dm644 src/roccat_aimo_gui.py "${pkgdir}/usr/lib/${pkgname}/roccat_aimo_gui.py"
   install -Dm644 src/roccat_rgb.py "${pkgdir}/usr/lib/${pkgname}/roccat_rgb.py"
+  install -Dm644 src/roccat_input.py "${pkgdir}/usr/lib/${pkgname}/roccat_input.py"
+  install -Dm644 src/roccat_aimo_bridge.py "${pkgdir}/usr/lib/${pkgname}/roccat_aimo_bridge.py"
+  install -Dm644 etc/udev/70-roccat-aimo.rules "${pkgdir}/usr/lib/udev/rules.d/70-roccat-aimo.rules"
   install -Dm644 src/roccat-aimo.desktop "${pkgdir}/usr/share/applications/roccat-aimo.desktop"
   install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"

@@ -19,9 +19,18 @@ if HAS_DISPLAY:
 
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Adw
+    from gi.repository import Adw, GLib
 
     import roccat_aimo_gui as gui
+
+
+def wait_idle(window):
+    deadline = time.monotonic() + 5
+    while window._busy and time.monotonic() < deadline:
+        GLib.MainContext.default().iteration(False)
+        time.sleep(0.01)
+    if window._busy:
+        raise AssertionError("GUI command timed out")
 
 
 def _script(path: Path, body: str) -> str:
@@ -94,6 +103,7 @@ exit 0
                 try:
                     super().do_activate()
                     window = self.get_windows()[0]
+                    wait_idle(window)
                     row = window.devices_store.get_row_at_index(0)
                     self.title = row.get_title()
                     self.subtitle = row.get_subtitle()
@@ -116,13 +126,16 @@ exit 0
                     window.g.set_value(0)
                     window.b.set_value(0)
                     window.apply_all()
+                    wait_idle(window)
                     self.dpi_status = window.status_label.get_label()
                     os.environ["ROCCAT_AIMO_CLI"] = bad
                     window.load_devices()
+                    wait_idle(window)
                     self.error_rows = window.devices_store.get_row_at_index(0)
                     self.error_status = window.status_label.get_label()
                     os.environ["ROCCAT_AIMO_CLI"] = broken
                     window.load_devices()
+                    wait_idle(window)
                     self.invalid_status = window.status_label.get_label()
                 except Exception as exc:
                     self.failure = exc
