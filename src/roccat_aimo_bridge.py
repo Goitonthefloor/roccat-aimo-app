@@ -105,7 +105,7 @@ def _json_safe(value: Any) -> Any:
 def describe_device(raw: Dict[str, Any], index: int) -> Dict[str, Any]:
     product_id = int(raw.get("product_id") or 0)
     vendor_id = int(raw.get("vendor_id") or 0)
-    name = roccat_rgb.product_name(product_id) if vendor_id == ROCCAT_VID else f"Unknown 0x{product_id:04x}"
+    name = roccat_rgb.product_name(product_id, raw.get("product_string")) if vendor_id == ROCCAT_VID else f"Unknown 0x{product_id:04x}"
     return {
         "serial_number": _json_safe(raw.get("serial_number")),
         "index": index,
@@ -118,6 +118,7 @@ def describe_device(raw: Dict[str, Any], index: int) -> Dict[str, Any]:
         "interface_number": _json_safe(raw.get("interface_number")),
         "path": _json_safe(raw.get("path")),
         "kind": roccat_rgb.kind_for_product(product_id) if vendor_id == ROCCAT_VID else "unknown",
+        "device_type": roccat_rgb.device_type_for_product(product_id) if vendor_id == ROCCAT_VID else "unknown",
     }
 
 
@@ -260,7 +261,12 @@ def grouped_devices() -> List[Dict[str, Any]]:
             described["interfaces"] = [interface]
             groups.append(described)
             continue
-        groups[index_by_key[key]]["interfaces"].append(interface)
+        group = groups[index_by_key[key]]
+        group["interfaces"].append(interface)
+        # Some HID interfaces omit the USB product descriptor.
+        if not group.get("product_string") and raw.get("product_string"):
+            group["product_string"] = _json_safe(raw["product_string"])
+            group["name"] = describe_device(raw, group["index"])["name"]
     return groups
 
 

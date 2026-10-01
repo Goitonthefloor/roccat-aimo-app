@@ -132,13 +132,22 @@ class RoccatDeviceRow(Adw.ActionRow):
         self.on_select = on_select
         vid = int(device.get("vendor_id") or 0)
         pid = int(device.get("product_id") or 0)
-        title = device.get("name") or device.get("product_string") or f"Unknown 0x{pid:04x}"
+        title = device.get("name")
+        if pid in {item["product"] for item in roccat_rgb.PRODUCTS}:
+            title = roccat_rgb.product_name(pid)
+        elif not title or str(title).startswith("Unknown 0x"):
+            title = roccat_rgb.product_name(pid, device.get("product_string"))
         self.set_title(str(title))
-        kind = device.get("kind") or roccat_rgb.kind_for_product(pid)
+        kind = roccat_rgb.kind_for_product(pid)
         lights = {"kone": "11 LEDs", "vulcan": "144 keys"}.get(kind, "")
         subtitle = f"vendor 0x{vid:04x} product 0x{pid:04x}"
         if lights:
             subtitle = f"{subtitle} · {lights}"
+        else:
+            subtitle = f"RGB not supported yet · {subtitle}"
+        device_type = roccat_rgb.device_type_for_product(pid)
+        category = {"mouse": "Mouse", "keyboard": "Keyboard"}.get(device_type, "Device")
+        subtitle = f"{category} · {subtitle}"
         self.set_subtitle(subtitle)
         self.set_activatable(True)
         self.connect("activated", lambda row: on_select(row))
@@ -169,7 +178,12 @@ class RoccatGui(Adw.ApplicationWindow):
         root = Adw.NavigationSplitView()
         root.set_min_sidebar_width(200)
         root.set_max_sidebar_width(240)
-        self.set_content(root)
+        window_toolbar = Adw.ToolbarView()
+        self.header_bar = Adw.HeaderBar()
+        self.header_bar.set_decoration_layout(":minimize,maximize,close")
+        window_toolbar.add_top_bar(self.header_bar)
+        window_toolbar.set_content(root)
+        self.set_content(window_toolbar)
 
         sidebar = Adw.NavigationPage(title="Devices")
         sb_box = Gtk.Box(
@@ -382,7 +396,7 @@ class RoccatGui(Adw.ApplicationWindow):
         self._set_controls()
 
     def _set_controls(self):
-        enabled = self.selected_index is not None and not self._busy
+        enabled = self.selected_index is not None and self._selected_kind in {"kone", "vulcan"} and not self._busy
         self._actions.set_sensitive(enabled)
         self._effects_widget.set_sensitive(enabled)
         self.devices_store.set_sensitive(not self._busy)
@@ -637,7 +651,7 @@ class RoccatGui(Adw.ApplicationWindow):
         self.selected_index = row.index
         self.devices_store.select_row(row)
         pid = int(row.device.get("product_id") or 0)
-        kind = row.device.get("kind") or roccat_rgb.kind_for_product(pid)
+        kind = roccat_rgb.kind_for_product(pid)
         self._selected_kind = kind
         if kind == "kone":
             self.zone.set_range(0, 10)
@@ -649,12 +663,13 @@ class RoccatGui(Adw.ApplicationWindow):
             self.zone.set_range(0, 143)
             self.zone_row.set_title("Light")
         self._sync_zone_hint()
-        title = row.device.get("name") or row.device.get("product_string") or row.get_title()
+        title = row.get_title()
         self.device_title.set_label(str(title))
         self.device_subtitle.set_label(row.get_subtitle() or "")
         self._set_controls()
         self._sync_preview()
-        self._set_status(f"Selected: {title}")
+        self._set_status(f"Selected: {title}" if kind in {"kone", "vulcan"}
+                         else f"Detected: {title}. RGB control is not supported for this model yet.")
 
     def _report(self, proc: subprocess.CompletedProcess[str], success: str) -> None:
         if proc.returncode == 0:
@@ -802,7 +817,7 @@ class RoccatGui(Adw.ApplicationWindow):
         return True
 
     def start_effect(self, name: str) -> None:
-        if self.selected_index is None or self._busy:
+        if self.selected_index is None or self._selected_kind not in {"kone", "vulcan"} or self._busy:
             return
         self.stop_effect(restore=False)
         self._effect_name = name
@@ -836,13 +851,13 @@ class RoccatGui(Adw.ApplicationWindow):
         self.apply_all()
 
     def apply_all(self) -> None:
-        if self.selected_index is None or self._busy:
+        if self.selected_index is None or self._selected_kind not in {"kone", "vulcan"} or self._busy:
             return
         self.stop_effect(restore=False)
         self._run_command(self._color_args(), lambda proc: self._report(proc, "RGB applied to all lights"))
 
     def apply_one(self) -> None:
-        if self.selected_index is None or self._busy:
+        if self.selected_index is None or self._selected_kind not in {"kone", "vulcan"} or self._busy:
             return
         self.stop_effect(restore=False)
         self._run_command(self._color_args(int(self.zone.get_value())),

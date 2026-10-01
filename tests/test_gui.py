@@ -103,6 +103,7 @@ exit 0
                 try:
                     super().do_activate()
                     window = self.get_windows()[0]
+                    assert window.header_bar.get_decoration_layout() == ":minimize,maximize,close"
                     wait_idle(window)
                     row = window.devices_store.get_row_at_index(0)
                     self.title = row.get_title()
@@ -160,6 +161,36 @@ exit 0
         self.assertIsNone(app.error_rows)
         self.assertIn("hidapi", app.error_status)
         self.assertIn("not valid JSON", app.invalid_status)
+
+    def test_unknown_device_shows_model_and_disables_rgb(self):
+        app = gui.RoccatApp()
+        app.register(None)
+        window = gui.RoccatGui(app)
+        self.addCleanup(window.close)
+        row = gui.RoccatDeviceRow({"index": 0, "vendor_id": 0x1E7D,
+                                  "product_id": 0xFFFF, "name": "Unknown 0xffff",
+                                  "product_string": "ROCCAT Other Model"}, 0, window.select_device)
+        window.devices_store.append(row)
+        window.select_device(row)
+        self.assertEqual(row.get_title(), "ROCCAT Other Model")
+        self.assertIn("RGB not supported", row.get_subtitle())
+        self.assertFalse(window._actions.get_sensitive())
+        self.assertFalse(window._effects_widget.get_sensitive())
+        self.assertIn("Detected:", window.status_label.get_label())
+
+    def test_vulcan_ii_overrides_incorrect_mouse_classification(self):
+        app = gui.RoccatApp()
+        app.register(None)
+        window = gui.RoccatGui(app)
+        self.addCleanup(window.close)
+        row = gui.RoccatDeviceRow({"vendor_id": 0x1E7D, "product_id": 0x2F4E,
+                                  "name": "Mouse", "kind": "kone"}, 0, window.select_device)
+        window.devices_store.append(row)
+        window.select_device(row)
+        self.assertEqual(row.get_title(), "Vulcan II")
+        self.assertIn("Keyboard", row.get_subtitle())
+        self.assertEqual(window._selected_kind, "vulcan-ii")
+        self.assertFalse(window._actions.get_sensitive())
 
     def test_cli_gui_command_stays_open(self):
         proc = subprocess.Popen(
