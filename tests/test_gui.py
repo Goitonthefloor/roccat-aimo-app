@@ -164,6 +164,7 @@ exit 0
 
     def test_unknown_device_shows_model_and_disables_rgb(self):
         app = gui.RoccatApp()
+        app.set_application_id("io.github.Goitonthefloor.roccat.test.unknown")
         app.register(None)
         window = gui.RoccatGui(app)
         self.addCleanup(window.close)
@@ -180,6 +181,7 @@ exit 0
 
     def test_vulcan_ii_overrides_incorrect_mouse_classification(self):
         app = gui.RoccatApp()
+        app.set_application_id("io.github.Goitonthefloor.roccat.test.vulcan2")
         app.register(None)
         window = gui.RoccatGui(app)
         self.addCleanup(window.close)
