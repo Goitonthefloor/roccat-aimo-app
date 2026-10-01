@@ -3,6 +3,9 @@
 GTK4 / libadwaita RGB controller for Linux, with Bazzite as the primary installation target.
 Supports Kone AIMO (`1e7d:2e27`, 11 LEDs), Vulcan 100 AIMO (`1e7d:307a`) and
 Vulcan 120 AIMO (`1e7d:3098`, 144 LED slots). Other Roccat products are not supported.
+Vulcan II (`1e7d:2f4e`) is identified as a keyboard, but its different RGB
+protocol is not implemented yet. Its lighting controls remain disabled.
+Unknown products use their USB model name when available.
 
 ## Bazzite: install and start
 

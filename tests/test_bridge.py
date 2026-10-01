@@ -134,6 +134,36 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("product_id: 0x2e27", text)
         self.assertNotIn("vendor_id: 0x1e7d product_id:", text)
 
+    def test_unknown_product_preserves_usb_model_name(self):
+        raw = kone_device()
+        raw.update(product_id=0xFFFF, product_string=b"ROCCAT Other Model")
+        device = bridge.describe_device(raw, 0)
+        self.assertEqual(device["name"], "ROCCAT Other Model")
+        self.assertEqual(device["kind"], "unknown")
+        raw["product_string"] = "  "
+        self.assertEqual(bridge.describe_device(raw, 0)["name"], "ROCCAT device")
+
+    def test_vulcan_ii_is_a_keyboard_with_separate_protocol(self):
+        raw = dict(kone_device(), product_id=0x2F4E, product_string="USB Gaming Device")
+        device = bridge.describe_device(raw, 0)
+        self.assertEqual(device["name"], "Vulcan II")
+        self.assertEqual(device["device_type"], "keyboard")
+        self.assertEqual(device["kind"], "vulcan-ii")
+        self.assertEqual(bridge.describe_device(kone_device(), 0)["device_type"], "mouse")
+        with self.assertRaisesRegex(OSError, "No RGB controller"):
+            bridge._send_colors(device, [(255, 0, 0)] * 144)
+        self.assertEqual(self.fake.created, [])
+
+    def test_group_uses_product_name_from_later_interface(self):
+        first = kone_device()
+        first.update(product_id=0xFFFF, product_string=None, serial_number="test")
+        second = dict(first, product_string="ROCCAT Other Model", interface_number=2)
+        self.fake.devices = [first, second]
+        devices = bridge.grouped_devices()
+        self.assertEqual(len(devices), 1)
+        self.assertEqual(devices[0]["name"], "ROCCAT Other Model")
+        self.assertEqual(len(devices[0]["interfaces"]), 2)
+
     def test_list_without_devices_exits_nonzero(self):
         self.fake.devices = []
         stdout = io.StringIO()

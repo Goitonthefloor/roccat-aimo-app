@@ -17,6 +17,7 @@ ROCCAT_VID = 0x1E7D
 KONE_AIMO = 0x2E27
 VULCAN_100_AIMO = 0x307A
 VULCAN_120_AIMO = 0x3098
+VULCAN_II = 0x2F4E
 KONE_LED_COUNT = 11
 VULCAN_KEY_COUNT = 144
 VULCAN_CTRL_INTERFACE = 1
@@ -40,7 +41,16 @@ PRODUCTS = (
     {"name": "Kone AIMO", "vendor": ROCCAT_VID, "product": KONE_AIMO, "kind": "kone"},
     {"name": "Vulcan 100 AIMO", "vendor": ROCCAT_VID, "product": VULCAN_100_AIMO, "kind": "vulcan"},
     {"name": "Vulcan 120 AIMO", "vendor": ROCCAT_VID, "product": VULCAN_120_AIMO, "kind": "vulcan"},
+    {"name": "Vulcan II", "vendor": ROCCAT_VID, "product": VULCAN_II, "kind": "vulcan-ii"},
 )
+
+def device_type_for_product(product_id: int) -> str:
+    kind = kind_for_product(product_id)
+    if kind == "kone":
+        return "mouse"
+    if kind in {"vulcan", "vulcan-ii"}:
+        return "keyboard"
+    return "unknown"
 
 def kind_for_product(product_id: int) -> str:
     for item in PRODUCTS:
@@ -48,11 +58,15 @@ def kind_for_product(product_id: int) -> str:
             return item["kind"]
     return "unknown"
 
-def product_name(product_id: int) -> str:
+def product_name(product_id: int, product_string=None) -> str:
     for item in PRODUCTS:
         if item["product"] == product_id:
             return item["name"]
-    return f"Unknown 0x{product_id:04x}"
+    if isinstance(product_string, bytes):
+        product_string = product_string.decode("utf-8", errors="replace")
+    if isinstance(product_string, str) and product_string.strip():
+        return product_string.strip()
+    return "ROCCAT device"
 
 def clamp_channel(value: int) -> int:
     return max(0, min(255, int(value)))
