@@ -5,12 +5,15 @@ pkgdesc='Userspace bridge and GTK4 controller for Roccat AIMO devices'
 arch=('x86_64')
 url='https://github.com/Goitonthefloor/roccat-aimo-app'
 license=('MIT')
-depends=('python' 'python-hidapi' 'python-gobject' 'gtk4' 'libadwaita')
-makedepends=()
-checkdepends=()
-optdepends=()
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('0033dcf52c09ea8cf6d9f5cf04456210d8bf4fcd651ad72fbdc26711ee895851')
+depends=('python' 'python-hidapi' 'python-gobject' 'gtk4>=4.12' 'libadwaita>=1.4')
+makedepends=('git')
+optdepends=(
+  'python-gobject: GUI helpers'
+  'gtk4: GUI runtime'
+  'libadwaita: GUI runtime'
+)
+source=("${pkgname}::git+${url}.git")
+sha256sums=('SKIP')
 
 prepare() {
   :
@@ -21,22 +24,27 @@ build() {
 }
 
 check() {
-  cd "$pkgname-$pkgver"
-  PYTHONPATH="$srcdir/$pkgname-$pkgver/src" python -m unittest discover -s tests
+  cd "$pkgname"
+  PYTHONPATH="$srcdir/$pkgname/src" python -m unittest discover -s tests
 }
 
 package() {
-  cd "$pkgname-$pkgver"
-
-  install -Dm755 src/roccat_aimo_bridge.py "$pkgdir/usr/bin/roccat-aimo-cli"
-  install -Dm644 src/aimo_themes.py "$pkgdir/usr/bin/aimo_themes.py"
-  install -Dm644 src/aimo_effects.py "$pkgdir/usr/bin/aimo_effects.py"
-  install -Dm644 src/roccat_aimo_gui.py "$pkgdir/usr/lib/$pkgname/roccat_aimo_gui.py"
-  install -Dm644 src/roccat_rgb.py "$pkgdir/usr/lib/$pkgname/roccat_rgb.py"
-  install -Dm644 src/roccat-aimo-bridge.service \
-    "$pkgdir/usr/lib/systemd/user/roccat-aimo-bridge.service"
-  install -Dm644 src/roccat-aimo.desktop \
-    "$pkgdir/usr/share/applications/roccat-aimo.desktop"
-  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
-  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  cd "${pkgname}"
+  install -Dm755 src/roccat_aimo_bridge.py "${pkgdir}/usr/bin/roccat-aimo-cli"
+  # Effect engines: AIMO software-renderer (aimo_effects/aimo_themes) and
+  # hardware HID engine (roccat_rgb/roccat_input). The bridge imports all four.
+  install -Dm644 src/aimo_themes.py "${pkgdir}/usr/lib/${pkgname}/aimo_themes.py"
+  install -Dm644 src/aimo_effects.py "${pkgdir}/usr/lib/${pkgname}/aimo_effects.py"
+  install -Dm644 src/roccat_rgb.py "${pkgdir}/usr/lib/${pkgname}/roccat_rgb.py"
+  install -Dm644 src/roccat_input.py "${pkgdir}/usr/lib/${pkgname}/roccat_input.py"
+  install -Dm644 src/roccat_aimo_bridge.py "${pkgdir}/usr/lib/${pkgname}/roccat_aimo_bridge.py"
+  install -Dm644 src/roccat_aimo_gui.py "${pkgdir}/usr/lib/${pkgname}/roccat_aimo_gui.py"
+  install -Dm644 src/roccat-aimo-bridge.service "${pkgdir}/usr/lib/systemd/user/roccat-aimo-bridge.service"
+  install -Dm644 etc/udev/70-roccat-aimo.rules "${pkgdir}/usr/lib/udev/rules.d/70-roccat-aimo.rules"
+  install -Dm644 src/roccat-aimo.desktop "${pkgdir}/usr/share/applications/roccat-aimo.desktop"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  if [ -f icons/roccat-aimo.svg ]; then
+    install -Dm644 icons/roccat-aimo.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/roccat-aimo.svg"
+  fi
 }

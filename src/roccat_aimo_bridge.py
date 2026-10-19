@@ -3,228 +3,220 @@
 
 import argparse
 import json
-import logging
+import os
+import signal
+import tempfile
+import math
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-logger = logging.getLogger("roccat-aimo")
-logging.basicConfig(level=logging.INFO)
 
-try:
-    from aimo_themes import RGB, gradient_color
-except ImportError:
-    # Fallback, falls aimo_themes nicht im selben Verzeichnis liegt.
-    from typing import Tuple
+def _ensure_local_modules() -> None:
+    for parent in (
+        Path(__file__).resolve().parent,
+        Path("/app/lib/roccat-aimo-app"),
+        Path.home() / ".local" / "lib" / "roccat-aimo-app",
+        Path("/usr/lib/roccat-aimo-app"),
+        Path("/usr/local/lib/roccat-aimo-app"),
+    ):
+        if (parent / "roccat_rgb.py").exists():
+            parent_text = str(parent)
+            if parent_text not in sys.path:
+                sys.path.insert(0, parent_text)
+            return
 
-    RGB = Tuple[int, int, int]
 
-    def gradient_color(stops, t):
-        t = max(0.0, min(1.0, t))
-        if len(stops) == 1:
-            return stops[0]
-        n = len(stops) - 1
-        seg = t * n
-        idx = min(int(seg), n - 1)
-        local = seg - idx
-        c0, c1 = stops[idx], stops[idx + 1]
-        return (
-            int(round(c0[0] + (c1[0] - c0[0]) * local)),
-            int(round(c0[1] + (c1[1] - c0[1]) * local)),
-            int(round(c0[2] + (c1[2] - c0[2]) * local)),
-        )
+_ensure_local_modules()
+import roccat_rgb
 
-try:
-    import hid
-except Exception:
-    logger.error("hidapi is required. Install python-hidapi.")
-    sys.exit(1)
+ROCCAT_VID = roccat_rgb.ROCCAT_VID
+_vulcan_ready = set()
 
-ROCCAT_VID = 0x1E7D
-PRODUCTS = [
-    # Kone AIMO
-    {"name": "Kone AIMO", "vendor": ROCCAT_VID, "product": 0x2E27},
-    # Vulcan AIMO series
-    {"name": "Vulcan AIMO", "vendor": ROCCAT_VID, "product": 0x2E24},
-    {"name": "Vulcan 120 AIMO", "vendor": ROCCAT_VID, "product": 0x2E26},
-    {"name": "Vulcan TKL AIMO", "vendor": ROCCAT_VID, "product": 0x2E2A},
-]
-STATE_PATH = Path.home() / ".local" / "state" / "roccat-aimo" / "devices.json"
+_hid: Any = None
+
+
+def state_path() -> Path:
+    override = os.environ.get("ROCCAT_AIMO_STATE")
+    if override:
+        return Path(override)
+    return Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))) / "roccat-aimo" / "devices.json"
+
+
+def require_hid() -> Any:
+    """Return the hidapi module. On Linux prefer the hidraw backend."""
+    global _hid
+    if _hid is not None:
+        return _hid
+    errors: List[str] = []
+    candidates = ["hidraw", "hid"] if sys.platform.startswith("linux") else ["hid"]
+    for name in candidates:
+        try:
+            module = __import__(name)
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            continue
+        _hid = module
+        return _hid
+    detail = "; ".join(errors) if errors else "import failed"
+    print(f"ERROR: hidapi is required. Install python-hidapi. ({detail})", file=sys.stderr)
+    raise SystemExit(1)
 
 
 def ensure_state_dir() -> None:
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    state_path().parent.mkdir(parents=True, exist_ok=True)
 
 
 def load_state() -> Dict[str, Any]:
-    if STATE_PATH.exists():
-        return json.loads(STATE_PATH.read_text())
-    return {"devices": []}
+    path = state_path()
+    if not path.exists():
+        return {"devices": []}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {"devices": []}
+    if not isinstance(data, dict):
+        return {"devices": []}
+    return data
 
 
 def save_state(state: Dict[str, Any]) -> None:
     ensure_state_dir()
-    STATE_PATH.write_text(json.dumps(state, indent=2))
+    path = state_path()
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as file:
+        temporary = Path(file.name)
+        json.dump(state, file, indent=2)
+        file.write("\n")
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (int, float, str, bool)):
+        return value
+    if isinstance(value, bytes):
+        return os.fsdecode(value)
+    return str(value)
+
+
+def describe_device(raw: Dict[str, Any], index: int) -> Dict[str, Any]:
+    product_id = int(raw.get("product_id") or 0)
+    vendor_id = int(raw.get("vendor_id") or 0)
+    name = roccat_rgb.product_name(product_id, raw.get("product_string")) if vendor_id == ROCCAT_VID else f"Unknown 0x{product_id:04x}"
+    return {
+        "serial_number": _json_safe(raw.get("serial_number")),
+        "index": index,
+        "name": name,
+        "vendor_id": vendor_id,
+        "product_id": product_id,
+        "product_string": _json_safe(raw.get("product_string")),
+        "manufacturer_string": _json_safe(raw.get("manufacturer_string")),
+        "release_number": _json_safe(raw.get("release_number")),
+        "interface_number": _json_safe(raw.get("interface_number")),
+        "path": _json_safe(raw.get("path")),
+        "kind": roccat_rgb.kind_for_product(product_id) if vendor_id == ROCCAT_VID else "unknown",
+        "device_type": roccat_rgb.device_type_for_product(product_id) if vendor_id == ROCCAT_VID else "unknown",
+    }
 
 
 def list_roccat_devices() -> List[Dict[str, Any]]:
+    hid = require_hid()
     devices = []
-    for d in hid.enumerate():
-        if d.get("vendor_id") == ROCCAT_VID:
-            devices.append(
-                {
-                    "vendor_id": d.get("vendor_id"),
-                    "product_id": d.get("product_id"),
-                    "path": d.get("path"),
-                    "product_string": d.get("product_string"),
-                    "manufacturer_string": d.get("manufacturer_string"),
-                    "release_number": d.get("release_number"),
-                    "interface_number": d.get("interface_number"),
-                }
-            )
+    for entry in hid.enumerate():
+        if int(entry.get("vendor_id") or 0) != ROCCAT_VID:
+            continue
+        devices.append(dict(entry))
     return devices
 
 
-def open_device_by_entry(entry: Dict[str, Any]) -> hid.device:
+def format_device_table(devices: List[Dict[str, Any]]) -> str:
+    if not devices:
+        return "No Roccat devices found.\n"
+    lines = [f"Found {len(devices)} Roccat device(s):"]
+    for dev in devices:
+        lines.append(f"[{dev['index']}] {dev['name']}")
+        lines.append(f"    manufacturer: {dev.get('manufacturer_string')}")
+        lines.append(f"    product: {dev.get('product_string')}")
+        lines.append(f"    vendor_id: 0x{int(dev.get('vendor_id') or 0):04x}")
+        lines.append(f"    product_id: 0x{int(dev.get('product_id') or 0):04x}")
+        lines.append(f"    path: {dev.get('path')}")
+    return "\n".join(lines) + "\n"
+
+
+def parse_device_json(stdout: str, returncode: int, stderr: str = "") -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Interpret `list --json` output. A JSON array wins over the exit code."""
+    text = (stdout or "").strip()
+    if text:
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            return [], f"Device list was not valid JSON ({exc})"
+        if isinstance(data, list) and all(isinstance(item, dict) for item in data):
+            return data, None
+        return [], "Device list was not a JSON array"
+    if returncode != 0:
+        err = (stderr or stdout or "Device scan failed").strip()
+        return [], err or "Device scan failed"
+    return [], None
+
+
+def open_device_by_entry(entry: Dict[str, Any]) -> Any:
+    hid = require_hid()
+    path = entry.get("path")
+    candidates: List[Any] = []
+    if isinstance(path, bytes) and path:
+        candidates.extend([path, os.fsdecode(path)])
+    elif isinstance(path, str) and path:
+        candidates.extend([path, os.fsencode(path)])
+    errors: List[str] = []
+    for candidate in candidates:
+        dev = hid.device()
+        try:
+            dev.open_path(candidate)
+            return dev
+        except Exception as exc:
+            errors.append(str(exc))
+            try:
+                dev.close()
+            except Exception:
+                pass
+    if candidates:
+        raise OSError("could not open the selected HID interface: " + "; ".join(errors)
+                      + ". Install the host udev rules and reconnect the device.")
     dev = hid.device()
     try:
-        dev.open_path(entry["path"])
-    except Exception:
-        dev.open(entry["vendor_id"], entry["product_id"])
+        dev.open(int(entry["vendor_id"]), int(entry["product_id"]))
+    except Exception as exc:
+        detail = "; ".join(errors)
+        suffix = f" (path errors: {detail})" if detail else ""
+        raise OSError(f"could not open HID device: {exc}{suffix}") from exc
     return dev
 
 
-def send_hid_report(dev: hid.device, report_id: int, data: bytes) -> None:
-    payload = bytes([report_id]) + data
-    dev.write([0x00] + list(payload))
+def send_feature_report(dev: Any, data: bytes) -> None:
+    written = dev.send_feature_report(data)
+    if isinstance(written, int) and written != len(data):
+        raise OSError(f"HID feature report 0x{data[0]:02x} failed")
 
 
-def set_kone_aimo_dpi(dev: hid.device, x: int, y: int) -> None:
-    x = max(100, min(16000, int(x)))
-    y = max(100, min(16000, int(y)))
-    data = bytes(
-        [
-            0x03,
-            0x04,
-            (x >> 8) & 0xFF,
-            x & 0xFF,
-            (y >> 8) & 0xFF,
-            y & 0xFF,
-        ]
-    )
-    send_hid_report(dev, 0x04, data)
+def write_output_report(dev: Any, data: bytes) -> None:
+    written = dev.write(data)
+    if isinstance(written, int) and written != len(data):
+        raise OSError("HID output report failed")
 
 
-def set_kone_aimo_led(dev: hid.device, enabled: bool, brightness: int = 255) -> None:
-    brightness = max(0, min(255, int(brightness)))
-    state = 0x01 if enabled else 0x00
-    data = bytes([0x07, state, brightness])
-    send_hid_report(dev, 0x04, data)
-
-
-def set_vulcan_key_rgb(
-    dev: hid.device, row: int, col: int, r: int, g: int, b: int
-) -> None:
-    row = max(0, min(5, int(row)))
-    col = max(0, min(20, int(col)))
-    r = max(0, min(255, int(r)))
-    g = max(0, min(255, int(g)))
-    b = max(0, min(255, int(b)))
-    data = bytes([0x0B, row, col, r, g, b])
-    send_hid_report(dev, 0x04, data)
-
-
-# Vulcan AIMO: 143 Tasten (Eruption NUM_KEYS=143), Grid 6 Reihen x 21 Spalten.
-VULCAN_NUM_KEYS = 143
-
-# Kone AIMO: 11 LEDs (LED_0..LED_10).
-KONE_NUM_LEDS = 11
-
-
-def set_vulcan_led_map(dev: hid.device, led_map: List[RGB]) -> None:
-    """Setzt alle Tasten-Farben via LED-Interface (aktuelles Eruption-Protokoll).
-
-    Eruption roccat_vulcan_1xx.rs: 448-B-Puffer, Header [0xa1,0x01,0x01,0xb4],
-    Farben in 12er-Blöcken (offset = (i//12)*36 + (i%12)), Farbteile sortiert
-    (R, dann +12 G, dann +24 B), 7 Chunks à 64 B, je als 65-B-Report
-    (Report-ID 0x00 + 64 B). Farben mit brightness/100 skaliert.
-    """
-    if len(led_map) < VULCAN_NUM_KEYS:
-        raise ValueError(
-            f"LED-Map zu kurz: {len(led_map)} < {VULCAN_NUM_KEYS}"
-        )
-    buffer = [0] * 448
-    buffer[0:4] = [0xA1, 0x01, 0x01, 0xB4]
-    for i in range(VULCAN_NUM_KEYS):
-        r, g, b = led_map[i]
-        offset = ((i // 12) * 36) + (i % 12)
-        buffer[offset + 4] = r
-        buffer[offset + 4 + 12] = g
-        buffer[offset + 4 + 24] = b
-    for bytes_ in (buffer[i : i + 64] for i in range(0, len(buffer), 64)):
-        tmp = [0] * 65
-        tmp[1:65] = bytes_
-        dev.write(tmp)
-
-
-def set_kone_led_map(dev: hid.device, led_map: List[RGB]) -> None:
-    """Setzt alle Kone-AIMO-LEDs (Eruption-Protokoll).
-
-    Eruption roccat_kone_aimo.rs: 46-B-Feature-Report
-    [0x0d, 0x2e, RGBA x 11 (+ Helligkeit via Alpha/Scale)] auf dem
-    Control-Interface.
-    """
-    if len(led_map) < KONE_NUM_LEDS:
-        raise ValueError(
-            f"LED-Map zu kurz: {len(led_map)} < {KONE_NUM_LEDS}"
-        )
-    report = [0x0D, 0x2E]
-    for r, g, b in led_map[:KONE_NUM_LEDS]:
-        # Alpha = maximale Helligkeit 255 (ungesättigt); Helligkeit wird
-        # bereits als globaler Multiplikator in der Effekt-Engine angewendet.
-        report.extend([r, g, b, 0xFF])
-    payload = bytes(report)
+def _init_delay() -> float:
+    raw = os.environ.get("ROCCAT_AIMO_INIT_DELAY", "0.2")
     try:
-        dev.send_feature_report(payload)
-    except AttributeError:
-        # Fallback: als Output-Report schreiben.
-        send_hid_report(dev, payload[0], payload[1:])
+        return max(0.0, float(raw))
+    except ValueError:
+        return 0.2
 
 
-def _send_led_map_for(dev: hid.device, led_map: List[RGB], _brightness: int) -> None:
-    """Vermittelt zwischen Vulcan- und Kone-send_led_map.
-
-    Die Effekt-Engine hat die Helligkeit bereits auf die Farben angewendet;
-    hier wird nur das passende geraetespezifische Protokoll gewaehlt.
-    """
-    if len(led_map) == VULCAN_NUM_KEYS:
-        set_vulcan_led_map(dev, led_map)
-    elif len(led_map) == KONE_NUM_LEDS:
-        set_kone_led_map(dev, led_map)
-    else:
-        raise ValueError(f"Unbekannte LED-Map-Groesse: {len(led_map)}")
-
-
-def apply_aimo_theme(dev: hid.device, theme: dict, direction: str = "h") -> None:
-    """Legt ein AIMO-Farbthema als Gradient über die Tastatur.
-
-    direction: 'h' = horizontal (Spalten), 'v' = vertikal (Reihen).
-    """
-    stops = theme["colors"]
-    led_map: List[RGB] = []
-    for i in range(VULCAN_NUM_KEYS):
-        row = i // 21
-        col = i % 21
-        if direction == "v":
-            t = row / 5.0
-        else:
-            t = col / 20.0
-        led_map.append(gradient_color(stops, t))
-    set_vulcan_led_map(dev, led_map)
-
-
-def read_device_state(dev: hid.device) -> Dict[str, Any]:
+def read_device_state(dev: Any) -> Dict[str, Any]:
     state: Dict[str, Any] = {}
     try:
         raw = dev.read(256, timeout_ms=200)
@@ -235,123 +227,278 @@ def read_device_state(dev: hid.device) -> Dict[str, Any]:
     return state
 
 
-def handle_list(_: argparse.Namespace) -> int:
-    devices = list_roccat_devices()
-    if not devices:
-        logger.info("No Roccat devices found.")
-        return 1
-    logger.info(f"Found {len(devices)} Roccat device(s):")
-    for idx, dev in enumerate(devices, 1):
-        prod = next(
-            (p for p in PRODUCTS if p["product"] == dev.get("product_id")), None
-        )
-        name = prod["name"] if prod else f"Unknown 0x{dev.get('product_id', 0):04x}"
-        print(f"{idx}. {name}")
-        logger.debug(f"manufacturer: {dev.get('manufacturer_string')}")
-        logger.debug(f"product: {dev.get('product_string')}")
-        print(
-            f"   vendor_id: 0x{dev.get('vendor_id', 0):04x} product_id: 0x{dev.get('product_id', 0):04x}"
-        )
-        logger.debug(f"path: {dev.get('path')}")
+def physical_id(raw: Dict[str, Any]) -> str:
+    path = os.fsdecode(raw.get("path") or "")
+    if path.startswith("/dev/hidraw"):
+        device = Path("/sys/class/hidraw") / Path(path).name / "device"
+        for parent in device.resolve().parents:
+            if (parent / "idVendor").exists() and (parent / "idProduct").exists():
+                return parent.name
+    if path.count(":") == 2 and not path.startswith("/dev/"):
+        return path.rsplit(":", 1)[0]
+    return str(raw.get("serial_number") or "")
+
+
+def grouped_devices() -> List[Dict[str, Any]]:
+    """One controller entry per physical device, with every HID interface attached."""
+    groups: List[Dict[str, Any]] = []
+    index_by_key: Dict[Tuple[int, int, str], int] = {}
+    for raw in list_roccat_devices():
+        vendor_id = int(raw.get("vendor_id") or 0)
+        product_id = int(raw.get("product_id") or 0)
+        serial = physical_id(raw)
+        key = (vendor_id, product_id, serial)
+        interface = {
+            "interface_number": raw.get("interface_number"),
+            "path": _json_safe(raw.get("path")),
+            "vendor_id": vendor_id,
+            "product_id": product_id,
+        }
+        if key not in index_by_key:
+            index_by_key[key] = len(groups)
+            described = describe_device(raw, len(groups))
+            described["physical_id"] = serial
+            described["interfaces"] = [interface]
+            groups.append(described)
+            continue
+        group = groups[index_by_key[key]]
+        group["interfaces"].append(interface)
+        # Some HID interfaces omit the USB product descriptor.
+        if not group.get("product_string") and raw.get("product_string"):
+            group["product_string"] = _json_safe(raw["product_string"])
+            group["name"] = describe_device(raw, group["index"])["name"]
+    return groups
+
+
+def _described_devices() -> List[Dict[str, Any]]:
+    return grouped_devices()
+
+
+def _persist_described(devices: List[Dict[str, Any]]) -> None:
     state = load_state()
     state["devices"] = devices
     save_state(state)
-    return 0
+
+
+def handle_list(args: argparse.Namespace) -> int:
+    devices = _described_devices()
+    _persist_described(devices)
+    if args.json:
+        print(json.dumps(devices))
+    else:
+        sys.stdout.write(format_device_table(devices))
+    return 0 if devices else 1
+
+
+def bridge_once(previous: Optional[str]) -> str:
+    devices = _described_devices()
+    blob = json.dumps(devices, sort_keys=True)
+    if blob != previous:
+        _persist_described(devices)
+        print(f"Tracking {len(devices)} Roccat device(s)", flush=True)
+    return blob
 
 
 def handle_bridge(_: argparse.Namespace) -> int:
+    previous: Optional[str] = None
     try:
         while True:
-            list_roccat_devices()
+            previous = bridge_once(previous)
             time.sleep(1)
     except KeyboardInterrupt:
         return 0
 
 
-def _pick_device(index: int) -> Dict[str, Any]:
-    devices = list_roccat_devices()
+def _pick_device(index: int) -> Optional[Dict[str, Any]]:
+    devices = grouped_devices()
     if not devices:
-        raise SystemExit("No Roccat devices found.")
-    index = max(0, min(index, len(devices) - 1))
+        print("No Roccat devices found.", file=sys.stderr)
+        return None
+    if index < 0 or index >= len(devices):
+        print(
+            f"Device index {index} is out of range (0..{len(devices) - 1}).",
+            file=sys.stderr,
+        )
+        return None
     return devices[index]
 
 
-def handle_dpi(args: argparse.Namespace) -> int:
-    entry = _pick_device(args.index)
-    dev = open_device_by_entry(entry)
+def _open_interfaces(group: Dict[str, Any], interface_number: Optional[int] = None) -> List[Dict[str, Any]]:
+    interfaces = list(group.get("interfaces") or [])
+    if interface_number is None:
+        return interfaces
+    return [item for item in interfaces if item.get("interface_number") == interface_number]
+
+
+def _color_key(group: Dict[str, Any]) -> str:
+    serial = group.get("physical_id") or group.get("serial_number") or ""
+    return f"{int(group.get('vendor_id') or 0):04x}:{int(group.get('product_id') or 0):04x}:{serial}"
+
+
+def _load_colors(group: Dict[str, Any], count: int) -> List[Tuple[int, int, int]]:
+    maps = load_state().get("color_maps") or {}
+    current = maps.get(_color_key(group)) if isinstance(maps, dict) else None
+    if (
+        isinstance(current, list)
+        and len(current) == count
+        and all(isinstance(item, list) and len(item) == 3
+                and all(isinstance(channel, int) and 0 <= channel <= 255 for channel in item)
+                for item in current)
+    ):
+        return [tuple(int(channel) for channel in item) for item in current]  # type: ignore[misc]
+    return [(0, 0, 0)] * count
+
+
+def _save_colors(group: Dict[str, Any], colors: Sequence[Tuple[int, int, int]]) -> None:
+    state = load_state()
+    maps = dict(state.get("color_maps") or {})
+    maps[_color_key(group)] = [list(color) for color in colors]
+    state["color_maps"] = maps
+    save_state(state)
+
+
+def _apply_color_map(
+    group: Dict[str, Any],
+    color: Tuple[int, int, int],
+    led: Optional[int],
+) -> List[Tuple[int, int, int]]:
+    kind = group.get("kind")
+    count = roccat_rgb.KONE_LED_COUNT if kind == "kone" else roccat_rgb.VULCAN_KEY_COUNT
+    colors = _load_colors(group, count)
+    if led is None:
+        return [color] * count
+    if led < 0 or led >= count:
+        raise ValueError(f"Light index {led} is out of range (0..{count - 1}).")
+    colors[led] = color
+    return colors
+
+
+def _send_kone_colors(group: Dict[str, Any], colors: Sequence[Tuple[int, int, int]]) -> None:
+    report = roccat_rgb.kone_color_report(colors)
+    errors: List[str] = []
+    for interface in _open_interfaces(group):
+        try:
+            dev = open_device_by_entry(interface)
+        except Exception as exc:
+            errors.append(str(exc))
+            continue
+        try:
+            dev.get_feature_report(0x04, 3)
+            send_feature_report(dev, roccat_rgb.KONE_INIT_REPORT)
+            send_feature_report(dev, roccat_rgb.KONE_INIT_REPORT)
+            send_feature_report(dev, report)
+            dev.get_feature_report(0x04, 3)
+            return
+        except Exception as exc:
+            errors.append(str(exc))
+        finally:
+            try:
+                dev.close()
+            except Exception:
+                pass
+    detail = "; ".join(errors) if errors else "no HID interface"
+    raise OSError(f"could not set Kone AIMO LEDs: {detail}")
+
+
+def _send_vulcan_colors(group: Dict[str, Any], colors: Sequence[Tuple[int, int, int]]) -> None:
+    ready_key = _color_key(group)
+    if ready_key not in _vulcan_ready:
+        ctrl_interfaces = _open_interfaces(group, roccat_rgb.VULCAN_CTRL_INTERFACE)
+        if not ctrl_interfaces:
+            raise OSError("Vulcan control interface 1 was not found")
+        dev = open_device_by_entry(ctrl_interfaces[0])
+        try:
+            delay = _init_delay()
+            for report in roccat_rgb.VULCAN_INIT_REPORTS:
+                send_feature_report(dev, report)
+                if delay:
+                    time.sleep(delay)
+        finally:
+            try:
+                dev.close()
+            except Exception:
+                pass
+        _vulcan_ready.add(ready_key)
+    led_interfaces = _open_interfaces(group, roccat_rgb.VULCAN_LED_INTERFACE)
+    if not led_interfaces:
+        raise OSError("Vulcan LED interface 3 was not found")
+    dev = open_device_by_entry(led_interfaces[0])
     try:
-        set_kone_aimo_dpi(dev, args.x, args.y)
-        logger.info(f"DPI set to {args.x}/{args.y} on index {args.index}")
+        for packet in roccat_rgb.vulcan_led_packets(colors):
+            write_output_report(dev, packet)
     finally:
-        dev.close()
-    return 0
+        try:
+            dev.close()
+        except Exception:
+            pass
 
 
-def handle_led(args: argparse.Namespace) -> int:
-    entry = _pick_device(args.index)
-    dev = open_device_by_entry(entry)
-    try:
-        set_kone_aimo_led(dev, args.on, args.brightness)
-        state = "ON" if args.on else "OFF"
-        logger.info(f"LED {state} at {args.brightness} on index {args.index}")
-    finally:
-        dev.close()
-    return 0
+def _send_colors(group: Dict[str, Any], colors: Sequence[Tuple[int, int, int]]) -> str:
+    kind = group.get("kind")
+    if kind == "kone":
+        _send_kone_colors(group, colors)
+        return "all 11 LEDs"
+    if kind == "vulcan":
+        _send_vulcan_colors(group, colors)
+        return "all 144 keys"
+    product = int(group.get("product_id") or 0)
+    raise OSError(f"No RGB controller for product 0x{product:04x}")
 
 
-def handle_rgb(args: argparse.Namespace) -> int:
-    entry = _pick_device(args.index)
-    dev = open_device_by_entry(entry)
-    try:
-        set_vulcan_key_rgb(dev, args.row, args.col, args.r, args.g, args.b)
-        logger.info(f"RGB set to {args.r},{args.g},{args.b} at row={args.row} col={args.col}")
-    finally:
-        dev.close()
-    return 0
+def paint_device(group: Dict[str, Any], color: Tuple[int, int, int], led: Optional[int]) -> str:
+    colors = _apply_color_map(group, color, led)
+    target = _send_colors(group, colors)
+    if led is not None:
+        target = roccat_rgb.KONE_LED_NAMES[led] if group.get("kind") == "kone" else f"key {led}"
+    _save_colors(group, colors)
+    red, green, blue = color
+    return f"RGB {red},{green},{blue} on {group.get('name')} {target}"
 
 
-def handle_aimo(args: argparse.Namespace) -> int:
-    try:
-        from aimo_themes import theme_by_name, theme_names
-    except ImportError:
-        logger.error("aimo_themes.py fehlt (im selben Verzeichnis wie die Bridge).")
-        return 1
-    try:
-        theme = theme_by_name(args.theme)
-    except KeyError as exc:
-        logger.error(f"{exc}. Verfügbar: {', '.join(theme_names())}")
-        return 1
-    entry = _pick_device(args.index)
-    dev = open_device_by_entry(entry)
-    try:
-        apply_aimo_theme(dev, theme, args.direction)
-        logger.info(
-            f"AIMO-Theme '{theme['name']}' ({args.direction}) auf index {args.index}"
-        )
-    finally:
-        dev.close()
-    return 0
+def _effect_interval() -> float:
+    raw = os.environ.get("ROCCAT_AIMO_EFFECT_INTERVAL")
+    if raw is None:
+        return 1 / roccat_rgb.EFFECT_FPS
+    return max(0.0, float(raw))
 
 
-def handle_effect(args: argparse.Namespace) -> int:
+
+
+# ---------------------------------------------------------------------------
+# Side A integration: software-rendered AIMO effects (aimo_effects.py).
+#
+# Remote B's `effect` subcommand stays exactly as designed (hardware effects
+# via roccat_rgb). Side A's software-rendered AIMO effects keep their own
+# documented command surface under `aimo-effect <effect> [...]`, matching the
+# per-effect argument structure of aimo_effects.resolve_effect_params.
+# Both engines share the same device send path (_send_colors).
+# ---------------------------------------------------------------------------
+
+AIMO_SOFTWARE_EFFECTS = ("static", "gradient", "breathing", "colorcycle", "wave")
+
+
+def _send_led_map_for(group: Dict[str, Any], led_map: Sequence[Tuple[int, int, int]]) -> None:
+    """Send a per-key LED map produced by aimo_effects through the device engine."""
+    colors = [tuple(int(x) for x in led) for led in led_map]
+    _send_colors(group, colors)
+
+
+def _run_aimo_software_effect(args: argparse.Namespace, group: Dict[str, Any]) -> int:
+    """Run one software-rendered AIMO effect (Side A engine) on a device."""
     try:
         import aimo_effects
     except ImportError:
-        logger.error(
-            "aimo_effects.py fehlt (im selben Verzeichnis wie die Bridge)."
-        )
+        print("ERROR: aimo_effects.py is not installed next to the bridge.", file=sys.stderr)
         return 1
+    from aimo_effects import run_effect
     try:
         params = aimo_effects.resolve_effect_params(args.effect, args)
     except (ValueError, KeyError) as exc:
-        logger.error(str(exc))
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-    from aimo_effects import (
-        STATIC_EFFECTS,
-        run_effect,
-    )
-
     entry = _pick_device(args.index)
+    if entry is None:
+        return 1
     dev = open_device_by_entry(entry)
     try:
         run_effect(
@@ -360,159 +507,260 @@ def handle_effect(args: argparse.Namespace) -> int:
             args.effect,
             params,
             brightness=args.brightness,
-            # Animations-Parameter existieren nur bei animierten Effekten;
-            # fuer statische (static/gradient) nutze die Defaults von run_effect.
             period=getattr(args, "period", 2.0),
             duration=getattr(args, "duration", 0.0),
             frame_interval=getattr(args, "frame_interval", 0.05),
-            send=_send_led_map_for,
+            send=lambda _dev, led_map, _br: _send_led_map_for(group, led_map),
         )
-        if args.effect not in STATIC_EFFECTS:
-            logger.info(
-                f"AIMO-Effekt '{args.effect}' bis Ctrl-C/Duration auf index "
-                f"{args.index}"
-            )
-        else:
-            logger.info(
-                f"AIMO-Effekt '{args.effect}' auf index {args.index}"
-            )
+        return 0
     finally:
-        dev.close()
-    return 0
+        try:
+            dev.close()
+        except Exception:
+            pass
 
 
-def handle_effect_list(_: argparse.Namespace) -> int:
-    try:
-        from aimo_effects import EFFECT_HELP, effect_names
-    except ImportError:
-        logger.error("aimo_effects.py fehlt.")
-        return 1
-    for name in effect_names():
-        print(f"{name:<12} {EFFECT_HELP[name]}")
-    return 0
-
-
-def handle_poll(args: argparse.Namespace) -> int:
-    entry = _pick_device(args.index)
-    dev = open_device_by_entry(entry)
-    try:
-        state = read_device_state(dev)
-        logger.info(json.dumps(state, indent=2))
-    finally:
-        dev.close()
-    return 0
-
-
-def _add_effect_subparsers(parent: argparse.ArgumentParser) -> None:
-    """Konfiguriert die `effect`-Subcommands (je AIMO-Effekt ein Befehl).
-
-    Statische Effekte (static, gradient) senden einen Frame; animierte
-    (breathing, colorcycle, wave) laufen als Loop bis --duration oder Ctrl-C.
-    """
+def _add_aimo_effect_subparsers(parent: argparse.ArgumentParser) -> None:
+    """Side A's software-effect command surface: aimo-effect <effect> [...]."""
     esh = parent.add_subparsers(dest="effect", required=True)
 
     def _common(p, animated: bool = False):
-        p.add_argument("--brightness", type=int, default=100, help="0..100")
+        p.add_argument("--brightness", type=int, default=100, help="0..100 (AIMO software effects)")
         p.add_argument("--index", type=int, default=0)
         if animated:
-            p.add_argument("--period", type=float, default=2.0, help="Loop-Periode in s")
-            p.add_argument("--duration", type=float, default=0.0, help="0 = endlos")
-            p.add_argument("--frame-interval", type=float, default=0.05, help="s")
+            p.add_argument("--period", type=float, default=2.0, help="Loop period in s")
+            p.add_argument("--duration", type=float, default=0.0, help="0 = run until Ctrl-C")
+            p.add_argument("--frame-interval", type=float, default=0.05, help="s per frame")
 
-    p = esh.add_parser("static", help="Constante Einzelfarbe (E2)")
+    p = esh.add_parser("static", help="Constant single color (E2)")
     p.add_argument("r", type=int)
     p.add_argument("g", type=int)
     p.add_argument("b", type=int)
     _common(p)
-    p.set_defaults(func=handle_effect)
+    p.set_defaults(func=handle_aimo_effect)
 
-    p = esh.add_parser("gradient", help="AIMO-Theme-Gradient (E1)")
-    p.add_argument("theme", help="Theme-Name/-Index oder 'r,g,b;r,g,b;...'")
+    p = esh.add_parser("gradient", help="AIMO theme gradient (E1)")
+    p.add_argument("theme", help="Theme name/index or 'r,g,b;r,g,b;...'")
     p.add_argument("--direction", choices=["h", "v"], default="h")
     _common(p)
-    p.set_defaults(func=handle_effect)
+    p.set_defaults(func=handle_aimo_effect)
 
-    p = esh.add_parser("breathing", help="Atmen / Pulse (E4)")
+    p = esh.add_parser("breathing", help="Breathe (E4)")
     p.add_argument("r", type=int)
     p.add_argument("g", type=int)
     p.add_argument("b", type=int)
-    p.add_argument("--min", type=int, default=0, help="min. Helligkeit 0..100")
-    p.add_argument("--max", type=int, default=100, help="max. Helligkeit 0..100")
+    p.add_argument("--min", type=int, default=0, help="min brightness 0..100")
+    p.add_argument("--max", type=int, default=100, help="max brightness 0..100")
     _common(p, animated=True)
-    p.set_defaults(func=handle_effect)
+    p.set_defaults(func=handle_aimo_effect)
 
-    p = esh.add_parser("colorcycle", help="Farbzyklus / Hue-Rotation (E5)")
-    p.add_argument("--hue", type=float, default=0.0, help="Start-Hue 0..360")
-    p.add_argument("--sat", type=float, default=1.0, help="Saettigung 0..1")
+    p = esh.add_parser("colorcycle", help="Color cycle / hue rotation (E5)")
+    p.add_argument("--hue", type=float, default=0.0, help="start hue 0..360")
+    p.add_argument("--sat", type=float, default=1.0, help="saturation 0..1")
     _common(p, animated=True)
-    p.set_defaults(func=handle_effect)
+    p.set_defaults(func=handle_aimo_effect)
 
-    p = esh.add_parser("wave", help="Welle ueber das Grid (E3)")
+    p = esh.add_parser("wave", help="Wave across the grid (E3)")
     p.add_argument("--mode", choices=["hue", "gradient"], default="hue")
-    p.add_argument("--theme", default=None, help="fuer mode=gradient")
+    p.add_argument("--theme", default=None, help="used when mode=gradient")
     p.add_argument("--direction", choices=["h", "v", "d"], default="h")
-    p.add_argument("--spread", type=float, default=1.0, help="Farb-Ausbreitung")
-    p.add_argument("--sat", type=float, default=1.0, help="Saettigung 0..1")
-    p.add_argument("--hue", type=float, default=0.0, help="Start-Hue 0..360")
+    p.add_argument("--spread", type=float, default=1.0, help="color spread")
+    p.add_argument("--sat", type=float, default=1.0, help="saturation 0..1")
+    p.add_argument("--hue", type=float, default=0.0, help="start hue 0..360")
     _common(p, animated=True)
-    p.set_defaults(func=handle_effect)
+    p.set_defaults(func=handle_aimo_effect)
+
+
+def handle_aimo_effect(args: argparse.Namespace) -> int:
+    group = _pick_device(args.index)
+    if group is None:
+        return 1
+    return _run_aimo_software_effect(args, group)
+
+
+def handle_effect(args: argparse.Namespace) -> int:
+    group = _pick_device(args.index)
+    if group is None:
+        return 1
+    kind = group.get("kind")
+    if kind == "kone":
+        count = roccat_rgb.KONE_LED_COUNT
+    elif kind == "vulcan":
+        count = roccat_rgb.VULCAN_KEY_COUNT
+    else:
+        product = int(group.get("product_id") or 0)
+        print(f"No RGB controller for product 0x{product:04x}", file=sys.stderr)
+        return 1
+
+    def _stop(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+    reader = None
+    if args.name == "reactive":
+        if kind != "vulcan":
+            raise ValueError("Light by Push requires a supported Vulcan keyboard")
+        from roccat_input import KeyPressReader
+        reader = KeyPressReader(group)
+    last_press = None
+    frame = 0
+    limit = args.frames
+    try:
+        while limit <= 0 or frame < limit:
+            started = time.monotonic()
+            if reader is not None and reader.pressed():
+                last_press = frame
+            colors = roccat_rgb.effect_colors(
+                args.name,
+                args.r,
+                args.g,
+                args.b,
+                args.brightness,
+                frame,
+                count,
+                roccat_rgb.clamp_speed(args.speed),
+                args.bpm, args.reverse, last_press,
+            )
+            _send_colors(group, colors)
+            preview = colors[0]
+            print(f"FRAME {preview[0]} {preview[1]} {preview[2]}", flush=True)
+            frame += 1
+            if limit > 0 and frame >= limit:
+                break
+            remaining = _effect_interval() - (time.monotonic() - started)
+            if remaining > 0:
+                time.sleep(remaining)
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        if reader is not None:
+            reader.close()
+    return 0
+
+
+def _run_on_device(index: int, action: Any) -> int:
+    entry = _pick_device(index)
+    if entry is None:
+        return 1
+    try:
+        dev = open_device_by_entry(entry)
+    except Exception as exc:
+        print(f"ERROR: could not open device {index}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        return int(action(dev))
+    except Exception as exc:
+        print(f"ERROR: device command failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        try:
+            dev.close()
+        except Exception:
+            pass
+
+
+def handle_dpi(args: argparse.Namespace) -> int:
+    if _pick_device(args.index) is None:
+        return 1
+    print("DPI control is not part of the RGB controller.", file=sys.stderr)
+    return 2
+
+
+def _paint_from_args(args: argparse.Namespace, color: Tuple[int, int, int], led: Optional[int]) -> int:
+    group = _pick_device(args.index)
+    if group is None:
+        return 1
+    try:
+        print(paint_device(group, color, led))
+    except Exception as exc:
+        print(f"ERROR: device command failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def handle_led(args: argparse.Namespace) -> int:
+    brightness = roccat_rgb.clamp_channel(args.brightness)
+    color = (brightness, brightness, brightness) if args.on else (0, 0, 0)
+    return _paint_from_args(args, color, None)
+
+
+def handle_rgb(args: argparse.Namespace) -> int:
+    color = roccat_rgb.scale_color(args.r, args.g, args.b, args.brightness)
+    return _paint_from_args(args, color, args.led)
+
+
+def handle_poll(args: argparse.Namespace) -> int:
+    def action(dev: Any) -> int:
+        print(json.dumps(read_device_state(dev), indent=2))
+        return 0
+
+    return _run_on_device(args.index, action)
+
+
+def finite_speed(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or not 0.25 <= number <= 4:
+        raise argparse.ArgumentTypeError("speed must be between 0.25 and 4")
+    return number
+
+
+def beat_tempo(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or not 30 <= number <= 240:
+        raise argparse.ArgumentTypeError("BPM must be between 30 and 240")
+    return number
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="roccat-aimo-cli", description="Roccat AIMO CLI"
-    )
+    parser = argparse.ArgumentParser(prog="roccat-aimo-cli", description="Roccat AIMO CLI")
     sub = parser.add_subparsers(dest="command")
 
     list_p = sub.add_parser("list", help="List Roccat devices")
+    list_p.add_argument("--json", action="store_true", help="Print devices as a JSON array")
     list_p.set_defaults(func=handle_list)
 
-    dpi_p = sub.add_parser("dpi", help="Set DPI on Kone AIMO")
+    dpi_p = sub.add_parser("dpi", help="DPI changes are not implemented")
     dpi_p.add_argument("x", type=int)
     dpi_p.add_argument("y", type=int)
-    dpi_p.add_argument("--index", type=int, default=0)
+    dpi_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")
     dpi_p.set_defaults(func=handle_dpi)
 
-    led_p = sub.add_parser("led", help="Toggle LED on Kone AIMO")
+    led_p = sub.add_parser("led", help="Turn every light on (white) or off")
     led_p.add_argument("on", type=int, choices=[0, 1])
     led_p.add_argument("--brightness", type=int, default=255)
-    led_p.add_argument("--index", type=int, default=0)
+    led_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")
     led_p.set_defaults(func=handle_led)
 
-    rgb_p = sub.add_parser("rgb", help="Set per-key RGB on Vulcan AIMO")
-    rgb_p.add_argument("row", type=int)
-    rgb_p.add_argument("col", type=int)
+    rgb_p = sub.add_parser("rgb", help="Set RGB on a Kone AIMO or Vulcan AIMO")
     rgb_p.add_argument("r", type=int)
     rgb_p.add_argument("g", type=int)
     rgb_p.add_argument("b", type=int)
-    rgb_p.add_argument("--index", type=int, default=0)
+    rgb_p.add_argument("--led", type=int, default=None, help="One Kone LED (0-10) or Vulcan key (0-143)")
+    rgb_p.add_argument("--brightness", type=int, default=255, help="Scale the color, 0-255")
+    rgb_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")
     rgb_p.set_defaults(func=handle_rgb)
 
-    aimo_p = sub.add_parser(
-        "aimo", help="Apply an AIMO color theme (gradient) across the keyboard"
-    )
-    aimo_p.add_argument("theme", help="Theme name or 1-based index")
-    aimo_p.add_argument(
-        "--direction",
-        choices=["h", "v"],
-        default="h",
-        help="Gradient direction: h=horizontal (default), v=vertical",
-    )
-    aimo_p.add_argument("--index", type=int, default=0)
-    aimo_p.set_defaults(func=handle_aimo)
+    effect_p = sub.add_parser("effect", help="Loop pulse, breathe, or rainbow until stopped")
+    effect_p.add_argument("name", choices=roccat_rgb.EFFECTS)
+    effect_p.add_argument("r", type=int)
+    effect_p.add_argument("g", type=int)
+    effect_p.add_argument("b", type=int)
+    effect_p.add_argument("--brightness", type=int, default=255, help="Scale the color, 0-255")
+    effect_p.add_argument("--speed", type=finite_speed, default=1.0, help="0.25 to 4")
+    effect_p.add_argument("--frames", type=int, default=0, help="Stop after this many frames; 0 runs until interrupted")
+    effect_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")
+    effect_p.add_argument("--bpm", type=beat_tempo, default=120, help="Beat tempo, 30–240 BPM (multiplied by speed)")
+    effect_p.add_argument("--reverse", action="store_true", help="Reverse flow direction")
+    effect_p.set_defaults(func=handle_effect)
 
-    effect_p = sub.add_parser(
-        "effect", help="Apply an AIMO effect (software-rendered LED map)"
+    aimo_effect_p = sub.add_parser(
+        "aimo-effect", help="Software-rendered AIMO effects (static/gradient/breathing/colorcycle/wave)"
     )
-    _add_effect_subparsers(effect_p)
-
-    effect_list_p = sub.add_parser(
-        "effect-list", help="List available AIMO effects with usage"
-    )
-    effect_list_p.set_defaults(func=handle_effect_list)
+    _add_aimo_effect_subparsers(aimo_effect_p)
 
     poll_p = sub.add_parser("poll", help="Read HID report")
-    poll_p.add_argument("--index", type=int, default=0)
+    poll_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")
     poll_p.set_defaults(func=handle_poll)
 
     gui_p = sub.add_parser("gui", help="Open GTK4 GUI")
@@ -524,32 +772,40 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def handle_gui() -> int:
-    candidates = [
+def gui_search_paths() -> List[Path]:
+    return [
+        Path(__file__).resolve().parent,
+        Path("/app/lib/roccat-aimo-app"),
         Path.home() / ".local" / "lib" / "roccat-aimo-app",
         Path("/usr/lib/roccat-aimo-app"),
         Path("/usr/local/lib/roccat-aimo-app"),
     ]
-    for parent in candidates:
-        mod = parent / "roccat_aimo_gui.py"
-        if mod.exists():
+
+
+def handle_gui() -> int:
+    for parent in gui_search_paths():
+        if (parent / "roccat_aimo_gui.py").exists():
             sys.path.insert(0, str(parent))
             break
     try:
         from roccat_aimo_gui import main as gui_main
     except ImportError as exc:
-        logger.error(f"GUI dependencies missing: {exc}")
+        print(f"GUI dependencies missing: {exc}", file=sys.stderr)
         return 1
     return gui_main()
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.command:
         parser.print_help()
         return 0
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

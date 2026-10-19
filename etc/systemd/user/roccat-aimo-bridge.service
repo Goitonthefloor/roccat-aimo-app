@@ -1,13 +1,12 @@
 [Unit]
-Description=Roccat AIMO Device Service
+Description=Roccat AIMO userspace bridge (Kone AIMO / Vulcan AIMO)
 After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/roccat-aimo-service
+ExecStart=%h/.local/bin/roccat-aimo-cli bridge
 Restart=on-failure
 RestartSec=5
-Environment=DISPLAY=:0
 
 [Install]
 WantedBy=default.target
