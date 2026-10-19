@@ -84,6 +84,36 @@ roccat-aimo-cli rgb 0 0 255 0 0
 roccat-aimo-cli poll
 ```
 
+### AIMO-Effekte (software-gerenderte LED-Maps)
+
+Alle Effekte werden pro Frame als per-key LED-Map berechnet und ueber das
+geraetespezifische `send_led_map`-Protokoll (Eruption-Ansatz) uebertragen.
+Belegt durch `EFFEKTE.md` (REA-Evidence + Eruption-Quellen).
+
+```bash
+roccat-aimo-cli effect-list
+
+# E2 Static - konstante Einzelfarbe
+roccat-aimo-cli effect static 255 0 0 --brightness 100
+
+# E1 AIMO-Theme-Gradient (Theme-Name/-Index oder 'r,g,b;r,g,b;...')
+roccat-aimo-cli effect gradient "AIMO 9" --direction h
+roccat-aimo-cli effect gradient "255,0,0;0,255,0;0,0,255" --direction v
+
+# E4 Breathing - Atmen (animiert, bis --duration oder Ctrl-C)
+roccat-aimo-cli effect breathing 0 255 0 --min 10 --max 90 --period 2 --duration 0
+
+# E5 Color-Cycle - Farbzyklus (Hue-Rotation)
+roccat-aimo-cli effect colorcycle --period 3 --duration 0
+
+# E3 Wave - Welle ueber das Grid (hue oder gradient)
+roccat-aimo-cli effect wave --mode hue --direction h --period 2
+roccat-aimo-cli effect wave --mode gradient --theme "AIMO 9" --direction d
+```
+
+Geraete: Vulcan AIMO (143 Keys, 6x21) und Kone AIMO (11 LEDs) werden anhand
+der Produkt-ID automatisch erkannt. `--index` waehlt das Geraet (siehe `list`).
+
 ### GUI
 
 ```bash

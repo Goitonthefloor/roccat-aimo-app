@@ -36,6 +36,7 @@ class RoccatGui(Adw.ApplicationWindow):
         self.selected_index = 0
         self.polling = False
         self.last_report = {}
+        self.effect_proc = None
 
         root = Adw.NavigationSplitView()
         self.set_content(root)
@@ -189,6 +190,69 @@ class RoccatGui(Adw.ApplicationWindow):
         aimo_group.get_child_last().set_child(aimo_btn)
         main_box.append(aimo_group)
 
+        # AIMO-Effekt-Auswahl (software-gerenderte LED-Maps)
+        self.effect_sel = Gtk.DropDown()
+        effect_model = Gtk.StringList.new(
+            ["static", "gradient", "breathing", "colorcycle", "wave"]
+        )
+        self.effect_sel.set_model(effect_model)
+        self.effect_sel.set_selected(0)
+        self.effect_theme = Gtk.DropDown()
+        self.effect_theme.set_model(Gtk.StringList.new(self.aimo_themes))
+        self.effect_theme.set_selected(0)
+        self.effect_dir = Gtk.DropDown()
+        self.effect_dir.set_model(Gtk.StringList.new(["h", "v", "d"]))
+        self.effect_dir.set_selected(0)
+        self.effect_r = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
+        self.effect_r.set_range(0, 255)
+        self.effect_r.set_value(255)
+        self.effect_g = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
+        self.effect_g.set_range(0, 255)
+        self.effect_g.set_value(0)
+        self.effect_b = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
+        self.effect_b.set_range(0, 255)
+        self.effect_b.set_value(0)
+        self.effect_period = Gtk.SpinButton()
+        self.effect_period.set_range(0.1, 60.0)
+        self.effect_period.set_increments(0.1, 1.0)
+        self.effect_period.set_value(2.0)
+        self.effect_duration = Gtk.SpinButton()
+        self.effect_duration.set_range(0, 3600)
+        self.effect_duration.set_increments(1, 10)
+        self.effect_duration.set_value(0)
+        effect_btn = Gtk.Button(label="Apply Effect")
+        effect_btn.connect("clicked", lambda _: self.apply_effect())
+
+        effect_group = Adw.PreferencesGroup.new()
+        effect_group.set_title("AIMO Effect")
+        row = Adw.ActionRow(title="Effect")
+        row.add_suffix(self.effect_sel)
+        effect_group.add(row)
+        row = Adw.ActionRow(title="Theme (gradient/wave)")
+        row.add_suffix(self.effect_theme)
+        effect_group.add(row)
+        row = Adw.ActionRow(title="Direction")
+        row.add_suffix(self.effect_dir)
+        effect_group.add(row)
+        row = Adw.ActionRow(title="Red")
+        row.add_suffix(self.effect_r)
+        effect_group.add(row)
+        row = Adw.ActionRow(title="Green")
+        row.add_suffix(self.effect_g)
+        effect_group.add(row)
+        row = Adw.ActionRow(title="Blue")
+        row.add_suffix(self.effect_b)
+        effect_group.add(row)
+        row = Adw.ActionRow(title="Period (s)")
+        row.add_suffix(self.effect_period)
+        effect_group.add(row)
+        row = Adw.ActionRow(title="Duration (s, 0=endless)")
+        row.add_suffix(self.effect_duration)
+        effect_group.add(row)
+        effect_group.add(Adw.PreferencesRow.new())
+        effect_group.get_child_last().set_child(effect_btn)
+        main_box.append(effect_group)
+
         main_page.set_child(main_box)
         root.set_sidebar(sidebar)
         root.set_content(main_page)
@@ -319,6 +383,46 @@ class RoccatGui(Adw.ApplicationWindow):
             self.status_label.set_label(f"AIMO theme applied: {theme} ({direction})")
         except Exception as exc:
             self.status_label.set_label(f"AIMO error: {exc}")
+
+    def apply_effect(self):
+        """Wendet einen AIMO-Effekt an (Hintergrundprozess).
+
+        Animierte Effekte laufen als eigener Prozess; ein vorheriger
+        Effekt-Prozess wird beendet, damit sich nicht zwei Loops ueberschreiben.
+        """
+        effect = ["static", "gradient", "breathing", "colorcycle", "wave"][
+            self.effect_sel.get_selected()
+        ]
+        theme = self.aimo_themes[self.effect_theme.get_selected()]
+        direction = ["h", "v", "d"][self.effect_dir.get_selected()]
+        r = int(self.effect_r.get_value())
+        g = int(self.effect_g.get_value())
+        b = int(self.effect_b.get_value())
+        period = self.effect_period.get_value()
+        duration = int(self.effect_duration.get_value())
+
+        cmd = ["roccat-aimo-cli", "effect", effect]
+        if effect in ("static", "breathing"):
+            cmd += [str(r), str(g), str(b)]
+        if effect == "gradient":
+            cmd += [theme, "--direction", direction]
+        if effect == "wave":
+            cmd += ["--mode", "gradient", "--theme", theme,
+                    "--direction", direction]
+        if effect in ("breathing", "colorcycle", "wave"):
+            cmd += ["--period", str(period), "--duration", str(duration)]
+        cmd += ["--index", str(self.selected_index)]
+
+        # Vorherigen Effekt-Prozess beenden, falls noch aktiv.
+        if self.effect_proc is not None and self.effect_proc.poll() is None:
+            self.effect_proc.terminate()
+        try:
+            self.effect_proc = subprocess.Popen(cmd)
+            self.status_label.set_label(
+                f"AIMO effect applied: {effect} (theme={theme}, dir={direction})"
+            )
+        except Exception as exc:
+            self.status_label.set_label(f"AIMO effect error: {exc}")
 
 
 class RoccatApp(Adw.Application):

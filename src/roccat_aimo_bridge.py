@@ -135,36 +135,75 @@ def set_vulcan_key_rgb(
     send_hid_report(dev, 0x04, data)
 
 
-# Vulcan AIMO: 144 Tasten, 6 Reihen x 21 Spalten (wie Vulcan Pro).
-VULCAN_NUM_KEYS = 144
+# Vulcan AIMO: 143 Tasten (Eruption NUM_KEYS=143), Grid 6 Reihen x 21 Spalten.
+VULCAN_NUM_KEYS = 143
+
+# Kone AIMO: 11 LEDs (LED_0..LED_10).
+KONE_NUM_LEDS = 11
 
 
 def set_vulcan_led_map(dev: hid.device, led_map: List[RGB]) -> None:
-    """Setzt alle Tasten-Farben via LED-Interface (Eruption-Protokoll).
+    """Setzt alle Tasten-Farben via LED-Interface (aktuelles Eruption-Protokoll).
 
-    Farben in Blöcken von 12 Tasten (2 Spalten), Farbteile sortiert
-    (erst alle R, dann G, dann B). 6 Chunks à 60 Bytes, je 64-Byte-Report.
+    Eruption roccat_vulcan_1xx.rs: 448-B-Puffer, Header [0xa1,0x01,0x01,0xb4],
+    Farben in 12er-Blöcken (offset = (i//12)*36 + (i%12)), Farbteile sortiert
+    (R, dann +12 G, dann +24 B), 7 Chunks à 64 B, je als 65-B-Report
+    (Report-ID 0x00 + 64 B). Farben mit brightness/100 skaliert.
     """
     if len(led_map) < VULCAN_NUM_KEYS:
         raise ValueError(
             f"LED-Map zu kurz: {len(led_map)} < {VULCAN_NUM_KEYS}"
         )
     buffer = [0] * 448
+    buffer[0:4] = [0xA1, 0x01, 0x01, 0xB4]
     for i in range(VULCAN_NUM_KEYS):
         r, g, b = led_map[i]
         offset = ((i // 12) * 36) + (i % 12)
-        buffer[offset] = r
-        buffer[offset + 12] = g
-        buffer[offset + 24] = b
-    for cntr in range(6):
-        chunk = buffer[cntr * 60 : (cntr + 1) * 60]
-        tmp = [0] * 64
-        if cntr < 1:
-            tmp[0:4] = [0xA1, 0x01, 0x80, 0x01]
-        else:
-            tmp[0:4] = [0xA1, cntr + 1, 0x00, 0x00]
-        tmp[4:64] = chunk
+        buffer[offset + 4] = r
+        buffer[offset + 4 + 12] = g
+        buffer[offset + 4 + 24] = b
+    for bytes_ in (buffer[i : i + 64] for i in range(0, len(buffer), 64)):
+        tmp = [0] * 65
+        tmp[1:65] = bytes_
         dev.write(tmp)
+
+
+def set_kone_led_map(dev: hid.device, led_map: List[RGB]) -> None:
+    """Setzt alle Kone-AIMO-LEDs (Eruption-Protokoll).
+
+    Eruption roccat_kone_aimo.rs: 46-B-Feature-Report
+    [0x0d, 0x2e, RGBA x 11 (+ Helligkeit via Alpha/Scale)] auf dem
+    Control-Interface.
+    """
+    if len(led_map) < KONE_NUM_LEDS:
+        raise ValueError(
+            f"LED-Map zu kurz: {len(led_map)} < {KONE_NUM_LEDS}"
+        )
+    report = [0x0D, 0x2E]
+    for r, g, b in led_map[:KONE_NUM_LEDS]:
+        # Alpha = maximale Helligkeit 255 (ungesättigt); Helligkeit wird
+        # bereits als globaler Multiplikator in der Effekt-Engine angewendet.
+        report.extend([r, g, b, 0xFF])
+    payload = bytes(report)
+    try:
+        dev.send_feature_report(payload)
+    except AttributeError:
+        # Fallback: als Output-Report schreiben.
+        send_hid_report(dev, payload[0], payload[1:])
+
+
+def _send_led_map_for(dev: hid.device, led_map: List[RGB], _brightness: int) -> None:
+    """Vermittelt zwischen Vulcan- und Kone-send_led_map.
+
+    Die Effekt-Engine hat die Helligkeit bereits auf die Farben angewendet;
+    hier wird nur das passende geraetespezifische Protokoll gewaehlt.
+    """
+    if len(led_map) == VULCAN_NUM_KEYS:
+        set_vulcan_led_map(dev, led_map)
+    elif len(led_map) == KONE_NUM_LEDS:
+        set_kone_led_map(dev, led_map)
+    else:
+        raise ValueError(f"Unbekannte LED-Map-Groesse: {len(led_map)}")
 
 
 def apply_aimo_theme(dev: hid.device, theme: dict, direction: str = "h") -> None:
@@ -294,6 +333,65 @@ def handle_aimo(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_effect(args: argparse.Namespace) -> int:
+    try:
+        import aimo_effects
+    except ImportError:
+        logger.error(
+            "aimo_effects.py fehlt (im selben Verzeichnis wie die Bridge)."
+        )
+        return 1
+    try:
+        params = aimo_effects.resolve_effect_params(args.effect, args)
+    except (ValueError, KeyError) as exc:
+        logger.error(str(exc))
+        return 1
+    from aimo_effects import (
+        EFFECT_HELP,
+        STATIC_EFFECTS,
+        backend_for,
+        run_effect,
+    )
+
+    entry = _pick_device(args.index)
+    dev = open_device_by_entry(entry)
+    try:
+        run_effect(
+            entry,
+            dev,
+            args.effect,
+            params,
+            brightness=args.brightness,
+            period=args.period,
+            duration=args.duration,
+            frame_interval=args.frame_interval,
+            send=_send_led_map_for,
+        )
+        if args.effect not in STATIC_EFFECTS:
+            logger.info(
+                f"AIMO-Effekt '{args.effect}' bis Ctrl-C/Duration auf index "
+                f"{args.index}"
+            )
+        else:
+            logger.info(
+                f"AIMO-Effekt '{args.effect}' auf index {args.index}"
+            )
+    finally:
+        dev.close()
+    return 0
+
+
+def handle_effect_list(_: argparse.Namespace) -> int:
+    try:
+        from aimo_effects import EFFECT_HELP, effect_names
+    except ImportError:
+        logger.error("aimo_effects.py fehlt.")
+        return 1
+    for name in effect_names():
+        print(f"{name:<12} {EFFECT_HELP[name]}")
+    return 0
+
+
 def handle_poll(args: argparse.Namespace) -> int:
     entry = _pick_device(args.index)
     dev = open_device_by_entry(entry)
@@ -303,6 +401,61 @@ def handle_poll(args: argparse.Namespace) -> int:
     finally:
         dev.close()
     return 0
+
+
+def _add_effect_subparsers(parent: argparse.ArgumentParser) -> None:
+    """Konfiguriert die `effect`-Subcommands (je AIMO-Effekt ein Befehl).
+
+    Statische Effekte (static, gradient) senden einen Frame; animierte
+    (breathing, colorcycle, wave) laufen als Loop bis --duration oder Ctrl-C.
+    """
+    esh = parent.add_subparsers(dest="effect", required=True)
+
+    def _common(p, animated: bool = False):
+        p.add_argument("--brightness", type=int, default=100, help="0..100")
+        p.add_argument("--index", type=int, default=0)
+        if animated:
+            p.add_argument("--period", type=float, default=2.0, help="Loop-Periode in s")
+            p.add_argument("--duration", type=float, default=0.0, help="0 = endlos")
+            p.add_argument("--frame-interval", type=float, default=0.05, help="s")
+
+    p = esh.add_parser("static", help="Constante Einzelfarbe (E2)")
+    p.add_argument("r", type=int)
+    p.add_argument("g", type=int)
+    p.add_argument("b", type=int)
+    _common(p)
+    p.set_defaults(func=handle_effect)
+
+    p = esh.add_parser("gradient", help="AIMO-Theme-Gradient (E1)")
+    p.add_argument("theme", help="Theme-Name/-Index oder 'r,g,b;r,g,b;...'")
+    p.add_argument("--direction", choices=["h", "v"], default="h")
+    _common(p)
+    p.set_defaults(func=handle_effect)
+
+    p = esh.add_parser("breathing", help="Atmen / Pulse (E4)")
+    p.add_argument("r", type=int)
+    p.add_argument("g", type=int)
+    p.add_argument("b", type=int)
+    p.add_argument("--min", type=int, default=0, help="min. Helligkeit 0..100")
+    p.add_argument("--max", type=int, default=100, help="max. Helligkeit 0..100")
+    _common(p, animated=True)
+    p.set_defaults(func=handle_effect)
+
+    p = esh.add_parser("colorcycle", help="Farbzyklus / Hue-Rotation (E5)")
+    p.add_argument("--hue", type=float, default=0.0, help="Start-Hue 0..360")
+    p.add_argument("--sat", type=float, default=1.0, help="Saettigung 0..1")
+    _common(p, animated=True)
+    p.set_defaults(func=handle_effect)
+
+    p = esh.add_parser("wave", help="Welle ueber das Grid (E3)")
+    p.add_argument("--mode", choices=["hue", "gradient"], default="hue")
+    p.add_argument("--theme", default=None, help="fuer mode=gradient")
+    p.add_argument("--direction", choices=["h", "v", "d"], default="h")
+    p.add_argument("--spread", type=float, default=1.0, help="Farb-Ausbreitung")
+    p.add_argument("--sat", type=float, default=1.0, help="Saettigung 0..1")
+    p.add_argument("--hue", type=float, default=0.0, help="Start-Hue 0..360")
+    _common(p, animated=True)
+    p.set_defaults(func=handle_effect)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -347,6 +500,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     aimo_p.add_argument("--index", type=int, default=0)
     aimo_p.set_defaults(func=handle_aimo)
+
+    effect_p = sub.add_parser(
+        "effect", help="Apply an AIMO effect (software-rendered LED map)"
+    )
+    _add_effect_subparsers(effect_p)
+
+    effect_list_p = sub.add_parser(
+        "effect-list", help="List available AIMO effects with usage"
+    )
+    effect_list_p.set_defaults(func=handle_effect_list)
 
     poll_p = sub.add_parser("poll", help="Read HID report")
     poll_p.add_argument("--index", type=int, default=0)
