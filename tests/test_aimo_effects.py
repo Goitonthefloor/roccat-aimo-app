@@ -11,8 +11,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
-
 SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
 
@@ -86,7 +84,6 @@ from aimo_effects import (  # noqa: E402
 from aimo_themes import theme_by_name  # noqa: E402
 
 from roccat_aimo_bridge import (  # noqa: E402
-    KONE_NUM_LEDS,
     VULCAN_NUM_KEYS,
     set_kone_led_map,
     set_vulcan_led_map,

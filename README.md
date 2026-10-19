@@ -120,6 +120,35 @@ der Produkt-ID automatisch erkannt. `--index` waehlt das Geraet (siehe `list`).
 roccat-aimo-cli gui
 ```
 
+## Tests / Verifikation
+
+Ohne echte Hardware lassen sich Effekt-Engine und Protokoll per Mock-HID
+verifizieren (sendet LED-Maps, ohne ein Gerät zu brauchen):
+
+```bash
+python3 -m pytest tests/ -q          # 9 Unit-Tests (Render, Protokoll-Layout, Dispatch)
+python3 tests/e2e_cli_mock.py        # 15 End-to-End-CLI-Checks gegen das AIMO-Paketformat
+```
+
+Die e2e-Checks prüfen die tatsächlich gesendeten Bytes gegen das erwartete
+Eruption/REA-Format:
+
+- **Vulcan AIMO** (143 LED): `effect static` → 7× 65-B-Output-Report,
+  Header `[0xa1,0x01,0x01,0xb4]`
+- **Kone AIMO** (11 LED): `effect static` → 1× 46-B-Feature-Report `[0x0d,0x2e, …]`
+- `effect gradient|breathing|colorcycle|wave` laufen ohne Fehler durch
+  (animierte Effekte rendern mehrere Frames, statische genau einen)
+
+Auf einem Rechner mit angeschlossenem Roccat-Gerät ersetzen `list`/`effect`
+die Mock-HID und schalten live:
+
+```bash
+roccat-aimo-cli list
+roccat-aimo-cli effect static 255 0 0
+roccat-aimo-cli effect gradient "AIMO 9" --direction h
+roccat-aimo-cli effect breathing 0 255 0 --duration 5
+```
+
 ## Build
 
 ```bash

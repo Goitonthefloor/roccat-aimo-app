@@ -4,6 +4,8 @@
 import subprocess
 import sys
 
+import gi  # noqa: E402  (PyGObject muss vor gi.require_version importiert sein)
+
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw  # noqa: E402

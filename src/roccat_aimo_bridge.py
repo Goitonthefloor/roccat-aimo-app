@@ -347,9 +347,7 @@ def handle_effect(args: argparse.Namespace) -> int:
         logger.error(str(exc))
         return 1
     from aimo_effects import (
-        EFFECT_HELP,
         STATIC_EFFECTS,
-        backend_for,
         run_effect,
     )
 
@@ -362,9 +360,11 @@ def handle_effect(args: argparse.Namespace) -> int:
             args.effect,
             params,
             brightness=args.brightness,
-            period=args.period,
-            duration=args.duration,
-            frame_interval=args.frame_interval,
+            # Animations-Parameter existieren nur bei animierten Effekten;
+            # fuer statische (static/gradient) nutze die Defaults von run_effect.
+            period=getattr(args, "period", 2.0),
+            duration=getattr(args, "duration", 0.0),
+            frame_interval=getattr(args, "frame_interval", 0.05),
             send=_send_led_map_for,
         )
         if args.effect not in STATIC_EFFECTS:
