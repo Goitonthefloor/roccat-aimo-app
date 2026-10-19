@@ -149,6 +149,21 @@ roccat-aimo-cli effect gradient "AIMO 9" --direction h
 roccat-aimo-cli effect breathing 0 255 0 --duration 5
 ```
 
+## Dokumentation (REA-Analyse & Board)
+
+Die AIMO-Protokollrecherche, die effektbasierte Auswahl und der Ist-Zustand der
+Linux-Software liegen als Markdown unter `docs/`:
+
+- **`docs/AIMO_PROTOKOLL.md`** — REA-Analyse der Roccat Swarm-Software (Ghidra):
+  HID-Report-Struktur, Effekt-Architektur (`aimo.dll`/`AimoEffect.dll`),
+  Dekodierung von `aimo_color_theme.dat` (10 Themes à 3 Farbstopps).
+- **`docs/EFFEKTE.md`** — evidenzbasierte Festlegung der nachgebildeten
+  AIMO-Effekte (E1–E5, je mit Quelle REA/Eruption).
+- **`docs/ISTZUSTAND.md`** — Bestandsaufnahme der vorhandenen Linux-RGB-Software
+  (roccat-aimo + Eruption) als Ausgangspunkt.
+- **`docs/TESTPROTOKOLL.md`** — Verifikation: 9 Unit-Tests + 15 CLI-e2e-Checks
+  (Mock-HID), zwei gefundene und gefixte Bugs.
+
 ## Build
 
 ```bash
