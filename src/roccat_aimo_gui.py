@@ -4,8 +4,6 @@
 import subprocess
 import sys
 
-import gi
-
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw  # noqa: E402
@@ -110,6 +108,24 @@ class RoccatGui(Adw.ApplicationWindow):
         rgb_btn = Gtk.Button(label="Apply RGB")
         rgb_btn.connect("clicked", lambda _: self.apply_rgb())
 
+        # AIMO-Theme-Auswahl
+        self.aimo_theme = Gtk.DropDown()
+        try:
+            from aimo_themes import theme_names
+
+            self.aimo_themes = theme_names()
+        except ImportError:
+            self.aimo_themes = ["AIMO 1"]
+        theme_model = Gtk.StringList.new(self.aimo_themes)
+        self.aimo_theme.set_model(theme_model)
+        self.aimo_theme.set_selected(0)
+        self.aimo_dir = Gtk.DropDown()
+        dir_model = Gtk.StringList.new(["horizontal", "vertical"])
+        self.aimo_dir.set_model(dir_model)
+        self.aimo_dir.set_selected(0)
+        aimo_btn = Gtk.Button(label="Apply AIMO Theme")
+        aimo_btn.connect("clicked", lambda _: self.apply_aimo())
+
         for widget in [
             Adw.PreferencesGroup.new(),
             self.status_label,
@@ -160,6 +176,18 @@ class RoccatGui(Adw.ApplicationWindow):
         rgb_group.add(Adw.PreferencesRow.new())
         rgb_group.get_child_last().set_child(rgb_btn)
         main_box.append(rgb_group)
+
+        aimo_group = Adw.PreferencesGroup.new()
+        aimo_group.set_title("AIMO Theme")
+        aimo_theme_row = Adw.ActionRow(title="Theme")
+        aimo_theme_row.add_suffix(self.aimo_theme)
+        aimo_group.add(aimo_theme_row)
+        aimo_dir_row = Adw.ActionRow(title="Direction")
+        aimo_dir_row.add_suffix(self.aimo_dir)
+        aimo_group.add(aimo_dir_row)
+        aimo_group.add(Adw.PreferencesRow.new())
+        aimo_group.get_child_last().set_child(aimo_btn)
+        main_box.append(aimo_group)
 
         main_page.set_child(main_box)
         root.set_sidebar(sidebar)
@@ -271,6 +299,26 @@ class RoccatGui(Adw.ApplicationWindow):
             self.status_label.set_label(f"RGB applied: ({row},{col}) = {r},{g},{b}")
         except Exception as exc:
             self.status_label.set_label(f"RGB error: {exc}")
+
+    def apply_aimo(self):
+        theme = self.aimo_themes[self.aimo_theme.get_selected()]
+        direction = "h" if self.aimo_dir.get_selected() == 0 else "v"
+        try:
+            subprocess.check_output(
+                [
+                    "roccat-aimo-cli",
+                    "aimo",
+                    theme,
+                    "--direction",
+                    direction,
+                    "--index",
+                    str(self.selected_index),
+                ],
+                text=True,
+            )
+            self.status_label.set_label(f"AIMO theme applied: {theme} ({direction})")
+        except Exception as exc:
+            self.status_label.set_label(f"AIMO error: {exc}")
 
 
 class RoccatApp(Adw.Application):
