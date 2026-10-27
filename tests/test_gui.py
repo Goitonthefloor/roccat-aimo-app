@@ -222,19 +222,21 @@ exit 0
         self.assertIn("--theme", aimo_args)
         # Nur der Button (ohne Master) lässt andere Bedienelemente frei.
         self.assertTrue(window._manual_widgets[1].get_sensitive())
-        # Master-Schalter sperrt alle anderen Bedienelemente.
+        # Master-Schalter sperrt alle anderen Bedienelemente inkl. Einzel-Button.
         window.aimo_master.set_active(True)
         window._set_controls()
         for widget in window._manual_widgets:
             self.assertFalse(widget.get_sensitive(), f"widget not locked: {widget}")
-        self.assertTrue(window.aimo_btn.get_sensitive())
+        self.assertFalse(window.aimo_btn.get_sensitive(),
+                         "Radio-Master active: Einzel-Button darf nicht klickbar sein")
         self.assertTrue(window._aimo_active)
-        # Master wieder aus => AIMO stoppt, manuelle Bedienung frei.
+        # Master wieder aus => AIMO stoppt, manuelle Bedienung + Button frei.
         window.aimo_master.set_active(False)
         window._on_aimo_master_changed()
         self.assertFalse(window._aimo_active)
         for widget in window._manual_widgets:
             self.assertTrue(widget.get_sensitive(), f"widget not restored: {widget}")
+        self.assertTrue(window.aimo_btn.get_sensitive())
         # Toggle-Auszweig des Buttons.
         window.toggle_aimo()  # an
         window.toggle_aimo()  # aus

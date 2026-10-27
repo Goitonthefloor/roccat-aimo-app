@@ -19,6 +19,11 @@ from gi.repository import Gtk, Adw, Gdk, GLib
 
 import roccat_rgb
 
+try:
+    import aimo_mode
+except ImportError:  # Fallback: GUI auch ohne installiertes Profilmodul startbar
+    aimo_mode = None
+
 
 STATIC_CSS = """
 .rgb-swatch {
@@ -321,7 +326,12 @@ class RoccatGui(Adw.ApplicationWindow):
         # software-gerendert wie Swarm. Button = einzeln aktivieren;
         # der Master-"Radio"-Schalter deaktiviert alle anderen Bedienelemente
         # und armiert den Modus vollständig (umschaltbar ohne Neustart).
-        self._aimo_signature = ((255, 0, 0), (255, 80, 0), (230, 140, 0))
+        # Farbstopps und CLI-/Preview-Logik kommen aus aimo_mode (Skills aus
+        # docs/aimo_reverse_engineering.md, single source of truth).
+        self._aimo_signature = (
+            aimo_mode.AIMO_SIGNATURE if aimo_mode is not None
+            else ((255, 0, 0), (255, 80, 0), (230, 140, 0))
+        )
         aimo_group = Adw.PreferencesGroup(title="AIMO-Modus")
         aimo_group.set_description(
             "AIMO-Signatur-Farbverlauf (Rot → Orange → Gelb) über das ganze Gerät, "
@@ -452,7 +462,10 @@ class RoccatGui(Adw.ApplicationWindow):
         self.devices_store.set_sensitive(not self._busy)
         self.refresh_btn.set_sensitive(not self._busy)
         self._effect_buttons["reactive"].set_sensitive(self._selected_kind == "vulcan")
-        self.aimo_btn.set_sensitive(enabled)
+        # Radio-Semantik: Bei aktivem Master-Switch ist auch der Einzel-Button
+        # gesperrt — der Master ist die einzige Schaltfläche, die den Modus
+        # steuert. Aus schalten geht nur über den Master selbst.
+        self.aimo_btn.set_sensitive(enabled and not self.aimo_master.get_active())
         self.aimo_master.set_sensitive(enabled)
 
     def _settings_changed(self):
@@ -900,8 +913,15 @@ class RoccatGui(Adw.ApplicationWindow):
             self.apply_all()
 
     def _aimo_cli_args(self) -> list[str]:
-        """CLI-Args für die AIMO-Signatur-Animation auf dem Gerät."""
+        """CLI-Args für die AIMO-Signatur-Animation auf dem Gerät.
+
+        Bezieht die Signatur-Farbstopps und die Befehlssignatur aus aimo_mode
+        (Skills aus docs/aimo_reverse_engineering.md) — eine Quelle für CLI und
+        Vorschau. Fallback nur, wenn das Profilmodul nicht installiert ist.
+        """
         brightness = max(0, min(100, int(self.brightness.get_value() * 100 / 255)))
+        if aimo_mode is not None:
+            return aimo_mode.aimo_cli_args(self.selected_index, brightness)
         signature = ";".join(f"{r},{g},{b}" for r, g, b in self._aimo_signature)
         return [
             "aimo-effect", "wave",
@@ -913,8 +933,14 @@ class RoccatGui(Adw.ApplicationWindow):
         ]
 
     def _aimo_colors(self, count: int) -> list[tuple[int, int, int]]:
-        """Preview-Farben für den AIMO-Signatur-Verlauf."""
+        """Preview-Farben für den AIMO-Signatur-Verlauf (delegiert an aimo_mode)."""
         try:
+            if aimo_mode is not None:
+                return aimo_mode.aimo_preview_colors(
+                    self._selected_kind or "vulcan",
+                    self._aimo_frame,
+                    int(self.brightness.get_value()),
+                )
             import aimo_effects
         except ImportError:
             return roccat_rgb.effect_colors(

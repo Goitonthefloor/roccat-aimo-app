@@ -35,6 +35,7 @@ modules:
       - install -Dm755 src/roccat_aimo_bridge.py /app/bin/roccat-aimo-cli
       - install -Dm644 src/aimo_themes.py /app/bin/aimo_themes.py
       - install -Dm644 src/aimo_effects.py /app/bin/aimo_effects.py
+      - install -Dm644 src/aimo_mode.py /app/bin/aimo_mode.py
       - install -Dm644 src/roccat_aimo_gui.py /app/lib/roccat-aimo-app/roccat_aimo_gui.py
       - install -Dm644 src/roccat_rgb.py /app/lib/roccat-aimo-app/roccat_rgb.py
       - install -Dm644 src/roccat_input.py /app/lib/roccat-aimo-app/roccat_input.py
