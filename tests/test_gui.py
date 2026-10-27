@@ -194,6 +194,52 @@ exit 0
         self.assertEqual(window._selected_kind, "vulcan-ii")
         self.assertFalse(window._actions.get_sensitive())
 
+    def test_aimo_buttons_arm_mode_and_master_locks_other_controls(self):
+        fake_cli = Path(tempfile.gettempdir()) / "aimo-fake-cli"
+        _script(fake_cli, "#!/bin/sh\nexit 0\n")
+        os.environ["ROCCAT_AIMO_CLI"] = str(fake_cli)
+        self.addCleanup(os.environ.pop, "ROCCAT_AIMO_CLI", None)
+        app = gui.RoccatApp()
+        app.set_application_id("io.github.Goitonthefloor.roccat.test.aimo")
+        app.register(None)
+        window = gui.RoccatGui(app)
+        self.addCleanup(window.close)
+        row = gui.RoccatDeviceRow({"index": 0, "vendor_id": 0x1E7D,
+                                  "product_id": 0x2E27, "name": "Kone AIMO",
+                                  "kind": "kone"}, 0, window.select_device)
+        window.devices_store.append(row)
+        window.select_device(row)
+        # AIMO-Button ist sichtbar und klickbar.
+        self.assertTrue(window.aimo_btn.get_sensitive())
+        self.assertEqual(window.aimo_btn.get_label(), "AIMO an")
+        # Ein Klick armiert den AIMO-Signatur-Modus (Wire: CLI-Args korrekt).
+        window.toggle_aimo()
+        aimo_args = window._aimo_cli_args()
+        self.assertTrue(window._aimo_active)
+        self.assertEqual(window.aimo_btn.get_label(), "AIMO aus")
+        self.assertEqual(aimo_args[0], "aimo-effect")
+        self.assertEqual(aimo_args[1], "wave")
+        self.assertIn("--theme", aimo_args)
+        # Nur der Button (ohne Master) lässt andere Bedienelemente frei.
+        self.assertTrue(window._manual_widgets[1].get_sensitive())
+        # Master-Schalter sperrt alle anderen Bedienelemente.
+        window.aimo_master.set_active(True)
+        window._set_controls()
+        for widget in window._manual_widgets:
+            self.assertFalse(widget.get_sensitive(), f"widget not locked: {widget}")
+        self.assertTrue(window.aimo_btn.get_sensitive())
+        self.assertTrue(window._aimo_active)
+        # Master wieder aus => AIMO stoppt, manuelle Bedienung frei.
+        window.aimo_master.set_active(False)
+        window._on_aimo_master_changed()
+        self.assertFalse(window._aimo_active)
+        for widget in window._manual_widgets:
+            self.assertTrue(widget.get_sensitive(), f"widget not restored: {widget}")
+        # Toggle-Auszweig des Buttons.
+        window.toggle_aimo()  # an
+        window.toggle_aimo()  # aus
+        self.assertFalse(window._aimo_active)
+
     def test_cli_gui_command_stays_open(self):
         proc = subprocess.Popen(
             [sys.executable, str(ROOT / "src" / "roccat_aimo_bridge.py"), "gui"],
