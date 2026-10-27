@@ -162,6 +162,71 @@ exit 0
         self.assertIn("hidapi", app.error_status)
         self.assertIn("not valid JSON", app.invalid_status)
 
+    def test_swarm_navigation_and_offline_state(self):
+        app = gui.RoccatApp()
+        app.set_application_id("io.github.Goitonthefloor.roccat.test.layout")
+        app.register(None)
+        window = gui.RoccatGui(app)
+        self.addCleanup(window.close)
+        self.assertEqual(window.view_stack.get_visible_child_name(), "overview")
+        self.assertIn("Offline", window.connection_label.get_label())
+        window.lighting_tab.set_active(True)
+        self.assertEqual(window.view_stack.get_visible_child_name(), "lighting")
+        self.assertEqual(window.device_title.get_label(), "Kein Gerät ausgewählt")
+        self.assertFalse(window._actions.get_sensitive())
+        self.assertFalse(window.profile_save.get_sensitive())
+
+    def test_session_profile_restores_lighting_without_hardware(self):
+        app = gui.RoccatApp()
+        app.set_application_id("io.github.Goitonthefloor.roccat.test.profile")
+        app.register(None)
+        window = gui.RoccatGui(app)
+        self.addCleanup(window.close)
+        row = gui.RoccatDeviceRow({"vendor_id": 0x1E7D, "product_id": 0x2E27,
+                                  "name": "Kone AIMO"}, 0, window.select_device)
+        window.devices_store.append(row)
+        window.select_device(row)
+        window.g.set_value(123)
+        window.profile_save.emit("clicked")
+        window.g.set_value(0)
+        window.profile_selector.set_selected(1)
+        window.profile_selector.set_selected(0)
+        self.assertEqual(int(window.g.get_value()), 123)
+        self.assertIn("Sitzungsprofil", window.status_label.get_label())
+
+    def test_navigation_effect_and_apply_smoke_with_fake_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            calls = Path(directory) / "calls"
+            cli = _script(Path(directory) / "cli", f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {calls}\ncase \"$1\" in effect) sleep 5 ;; esac\n")
+            os.environ["ROCCAT_AIMO_CLI"] = cli
+            self.addCleanup(os.environ.pop, "ROCCAT_AIMO_CLI", None)
+            app = gui.RoccatApp()
+            app.set_application_id("io.github.Goitonthefloor.roccat.test.smoke")
+            app.register(None)
+            window = gui.RoccatGui(app)
+            self.addCleanup(window.close)
+            row = gui.RoccatDeviceRow({"vendor_id": 0x1E7D, "product_id": 0x2E27,
+                                      "name": "Kone AIMO"}, 0, window.select_device)
+            window.devices_store.append(row)
+            window.select_device(row)
+            window.lighting_tab.set_active(True)
+            self.assertEqual(window.view_stack.get_visible_child_name(), "lighting")
+            window.start_effect("pulse")
+            self.assertEqual(window._effect_name, "pulse")
+            deadline = time.monotonic() + 2
+            while not calls.exists() and time.monotonic() < deadline:
+                GLib.MainContext.default().iteration(False)
+                time.sleep(0.01)
+            self.assertTrue(calls.exists(), "Effektprozess wurde nicht gestartet")
+            window.stop_effect(restore=False)
+            window.profile_save.emit("clicked")
+            window.apply_all()
+            wait_idle(window)
+            lines = calls.read_text().splitlines()
+            self.assertTrue(any(line.startswith("effect pulse ") for line in lines))
+            self.assertTrue(any(line.startswith("rgb ") for line in lines))
+            self.assertIsNotNone(window._session_profiles[0])
+
     def test_unknown_device_shows_model_and_disables_rgb(self):
         app = gui.RoccatApp()
         app.set_application_id("io.github.Goitonthefloor.roccat.test.unknown")
@@ -174,10 +239,10 @@ exit 0
         window.devices_store.append(row)
         window.select_device(row)
         self.assertEqual(row.get_title(), "ROCCAT Other Model")
-        self.assertIn("RGB not supported", row.get_subtitle())
+        self.assertIn("RGB noch nicht unterstützt", row.get_subtitle())
         self.assertFalse(window._actions.get_sensitive())
         self.assertFalse(window._effects_widget.get_sensitive())
-        self.assertIn("Detected:", window.status_label.get_label())
+        self.assertIn("Erkannt:", window.status_label.get_label())
 
     def test_vulcan_ii_overrides_incorrect_mouse_classification(self):
         app = gui.RoccatApp()
@@ -190,7 +255,7 @@ exit 0
         window.devices_store.append(row)
         window.select_device(row)
         self.assertEqual(row.get_title(), "Vulcan II")
-        self.assertIn("Keyboard", row.get_subtitle())
+        self.assertIn("Tastatur", row.get_subtitle())
         self.assertEqual(window._selected_kind, "vulcan-ii")
         self.assertFalse(window._actions.get_sensitive())
 

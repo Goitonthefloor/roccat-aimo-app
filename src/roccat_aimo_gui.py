@@ -25,10 +25,34 @@ except ImportError:  # Fallback: GUI auch ohne installiertes Profilmodul startba
     aimo_mode = None
 
 
+EFFECT_UI_LABELS = {
+    "pulse": "Pulsieren", "breathe": "Atmen", "rainbow": "Regenbogen",
+    "rainbow-flow": "Regenbogenfluss", "wave": "Welle", "cycle": "Farbwechsel",
+    "beat": "Takt", "reactive": "Tastendruck",
+}
+
 STATIC_CSS = """
+window.swarm-window { color: #e7e9eb; }
+window.swarm-window { background: #171a1d; }
+.swarm-brand { background: #111417; border-bottom: 1px solid #30373b; padding: 8px 16px; }
+.swarm-logo { font-size: 20px; font-weight: 900; letter-spacing: 3px; color: #ffffff; }
+.swarm-accent { color: #00bcd4; font-weight: 800; letter-spacing: 2px; }
+.swarm-sidebar { background: #202428; border-right: 1px solid #3a4145; }
+.swarm-content { background: #24282c; }
+.swarm-nav { background: #191d20; border-bottom: 2px solid #343c40; padding: 6px 14px; }
+button.swarm-tab { background: transparent; border: 0; border-radius: 0; padding: 8px 18px; color: #a6afb4; }
+button.swarm-tab:checked { color: #ffffff; border-bottom: 3px solid #00bcd4; }
+.swarm-panel { background: #30353a; border: 1px solid #454d51; border-radius: 2px; padding: 10px; }
+.swarm-footer { background: #191d20; border-top: 1px solid #454d51; padding: 8px 14px; }
+.swarm-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: #00bcd4; }
+.swarm-muted { color: #aab3b7; }
+button.swarm-apply, button.suggested-action { background: #009bb2; color: #ffffff; border-radius: 2px; font-weight: 700; }
+button.swarm-apply:hover, button.suggested-action:hover { background: #00bcd4; }
+button:disabled { background: #363b3e; color: #737e83; }
+button.swarm-secondary { border-radius: 2px; background: #40484d; }
 .rgb-swatch {
   border-radius: 18px;
-  min-height: 72px;
+  min-height: 48px;
   border: 1px solid rgba(255, 255, 255, 0.28);
 }
 button.preset {
@@ -148,14 +172,14 @@ class RoccatDeviceRow(Adw.ActionRow):
             title = roccat_rgb.product_name(pid, device.get("product_string"))
         self.set_title(str(title))
         kind = roccat_rgb.kind_for_product(pid)
-        lights = {"kone": "11 LEDs", "vulcan": "144 keys"}.get(kind, "")
-        subtitle = f"vendor 0x{vid:04x} product 0x{pid:04x}"
+        lights = {"kone": "11 LEDs", "vulcan": "144 Tasten"}.get(kind, "")
+        subtitle = f"Hersteller 0x{vid:04x} · Produkt 0x{pid:04x}"
         if lights:
             subtitle = f"{subtitle} · {lights}"
         else:
-            subtitle = f"RGB not supported yet · {subtitle}"
+            subtitle = f"RGB noch nicht unterstützt · {subtitle}"
         device_type = roccat_rgb.device_type_for_product(pid)
-        category = {"mouse": "Mouse", "keyboard": "Keyboard"}.get(device_type, "Device")
+        category = {"mouse": "Maus", "keyboard": "Tastatur"}.get(device_type, "Gerät")
         subtitle = f"{category} · {subtitle}"
         self.set_subtitle(subtitle)
         self.set_activatable(True)
@@ -165,7 +189,9 @@ class RoccatDeviceRow(Adw.ActionRow):
 class RoccatGui(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Roccat AIMO RGB")
-        self.set_default_size(960, 640)
+        self.set_default_size(1100, 760)
+        self.add_css_class("swarm-window")
+        self._session_profiles: list[tuple[int, int, int, int, float, int, bool] | None] = [None] * 5
         self.selected_index = None
         self._busy = False
         self._closed = False
@@ -194,10 +220,24 @@ class RoccatGui(Adw.ApplicationWindow):
         self.header_bar = Adw.HeaderBar()
         self.header_bar.set_decoration_layout(":minimize,maximize,close")
         window_toolbar.add_top_bar(self.header_bar)
+        brand = Gtk.Box(spacing=18)
+        brand.add_css_class("swarm-brand")
+        logo = Gtk.Label(label="ROCCAT  SWARM")
+        logo.add_css_class("swarm-logo")
+        brand.append(logo)
+        edition = Gtk.Label(label="AIMO · LINUX")
+        edition.add_css_class("swarm-accent")
+        brand.append(edition)
+        self.connection_label = Gtk.Label(label="● Offline · kein Gerät angeschlossen")
+        self.connection_label.set_hexpand(True)
+        self.connection_label.set_halign(Gtk.Align.END)
+        self.connection_label.add_css_class("swarm-muted")
+        brand.append(self.connection_label)
+        window_toolbar.add_top_bar(brand)
         window_toolbar.set_content(root)
         self.set_content(window_toolbar)
 
-        sidebar = Adw.NavigationPage(title="Devices")
+        sidebar = Adw.NavigationPage(title="Geräte")
         sb_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
             spacing=8,
@@ -206,12 +246,16 @@ class RoccatGui(Adw.ApplicationWindow):
             margin_start=12,
             margin_end=12,
         )
+        sb_box.add_css_class("swarm-sidebar")
+        section = Gtk.Label(label="// GERÄTE", xalign=0)
+        section.add_css_class("swarm-eyebrow")
+        sb_box.append(section)
         header = Gtk.Box(spacing=8)
         self.refresh_btn = Gtk.Button()
         self.refresh_btn.set_child(
-            Adw.ButtonContent(label="Refresh", icon_name="view-refresh-symbolic")
+            Adw.ButtonContent(label="Neu suchen", icon_name="view-refresh-symbolic")
         )
-        self.refresh_btn.set_tooltip_text("Refresh devices")
+        self.refresh_btn.set_tooltip_text("Geräte erneut suchen")
         self.refresh_btn.set_halign(Gtk.Align.START)
         self.refresh_btn.connect("clicked", lambda _: self.load_devices())
         header.append(self.refresh_btn)
@@ -222,7 +266,7 @@ class RoccatGui(Adw.ApplicationWindow):
         device_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         device_scroll.set_vexpand(True)
         device_scroll.set_child(self.devices_store)
-        self.empty_hint = Gtk.Label(label="Plug in a Kone AIMO or a Vulcan AIMO.")
+        self.empty_hint = Gtk.Label(label="Keine Geräte gefunden. Kone AIMO oder Vulcan AIMO anschließen; Offline-Vorschau ohne Hardware.")
         self.empty_hint.set_wrap(True)
         self.empty_hint.set_xalign(0)
         self.empty_hint.add_css_class("dim-label")
@@ -242,7 +286,7 @@ class RoccatGui(Adw.ApplicationWindow):
 
         self.zone = Adw.SpinRow.new_with_range(0, 143, 1)
         self.zone.set_digits(0)
-        self.zone.set_title("Light")
+        self.zone.set_title("Lichtzone")
         self.zone_row = self.zone
         self.zone.connect("notify::value", lambda *_args: self._sync_zone_hint())
 
@@ -254,10 +298,10 @@ class RoccatGui(Adw.ApplicationWindow):
             margin_start=16,
             margin_end=16,
         )
-        self.device_title = Gtk.Label(label="RGB controller", xalign=0)
+        self.device_title = Gtk.Label(label="Kein Gerät ausgewählt", xalign=0)
         self.device_title.add_css_class("title-2")
         self.device_title.set_wrap(True)
-        self.device_subtitle = Gtk.Label(label="Choose a color, then send it to the lights.", xalign=0)
+        self.device_subtitle = Gtk.Label(label="Offline-Vorschau · Änderungen werden erst mit angeschlossenem Gerät übertragen.", xalign=0)
         self.device_subtitle.set_wrap(True)
         self.device_subtitle.add_css_class("dim-label")
         content.append(self.device_title)
@@ -265,13 +309,13 @@ class RoccatGui(Adw.ApplicationWindow):
 
         self.swatch = Gtk.Box()
         self.swatch.add_css_class("rgb-swatch")
-        self.swatch.set_size_request(-1, 72)
+        self.swatch.set_size_request(-1, 48)
         self.swatch.set_hexpand(True)
         content.append(self.swatch)
         self.led_preview = Gtk.DrawingArea()
         self.led_preview.set_content_height(96)
         self.led_preview.set_draw_func(self._draw_lights)
-        self.led_preview.set_tooltip_text("LED sequence preview; not a physical keyboard layout")
+        self.led_preview.set_tooltip_text("LED-Vorschau, keine physische Tastaturbelegung")
         content.append(self.led_preview)
 
         readout = Gtk.Box(spacing=12)
@@ -284,13 +328,13 @@ class RoccatGui(Adw.ApplicationWindow):
         self.hex_entry.set_width_chars(7)
         self.hex_entry.set_alignment(0.5)
         self.hex_entry.set_placeholder_text("#RRGGBB")
-        self.hex_entry.set_tooltip_text("Type a hex color")
+        self.hex_entry.set_tooltip_text("Hexadezimale Farbe eingeben")
         self.hex_entry.connect("changed", self._on_hex_changed)
         readout.append(self.preview_label)
         readout.append(self.hex_entry)
         content.append(readout)
 
-        self.preview_detail = Gtk.Label(label="Full brightness")
+        self.preview_detail = Gtk.Label(label="Volle Helligkeit")
         self.preview_detail.add_css_class("dim-label")
         self.preview_detail.set_halign(Gtk.Align.CENTER)
         self.preview_detail.set_wrap(True)
@@ -299,11 +343,11 @@ class RoccatGui(Adw.ApplicationWindow):
 
         presets = Gtk.Box(spacing=8, homogeneous=True)
         for label, color, css in (
-            ("Off", (0, 0, 0), "preset-off"),
-            ("Red", (255, 0, 0), "preset-red"),
-            ("Green", (0, 255, 0), "preset-green"),
-            ("Blue", (0, 0, 255), "preset-blue"),
-            ("White", (255, 255, 255), "preset-white"),
+            ("Aus", (0, 0, 0), "preset-off"),
+            ("Rot", (255, 0, 0), "preset-red"),
+            ("Grün", (0, 255, 0), "preset-green"),
+            ("Blau", (0, 0, 255), "preset-blue"),
+            ("Weiß", (255, 255, 255), "preset-white"),
         ):
             presets.append(self._preset_button(label, color, css))
         content.append(presets)
@@ -311,12 +355,12 @@ class RoccatGui(Adw.ApplicationWindow):
         effects = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
                               column_spacing=8, row_spacing=8, max_children_per_line=4)
         for name in roccat_rgb.EFFECTS:
-            button = Gtk.Button(label=roccat_rgb.EFFECT_LABELS[name])
+            button = Gtk.Button(label=EFFECT_UI_LABELS[name])
             button.add_css_class("pill")
             button.connect("clicked", lambda _, chosen=name: self.start_effect(chosen))
             self._effect_buttons[name] = button
             effects.append(button)
-        stop = Gtk.Button(label="Stop")
+        stop = Gtk.Button(label="Stopp")
         stop.add_css_class("pill")
         stop.connect("clicked", lambda _: self.stop_effect(restore=True))
         effects.append(stop)
@@ -333,10 +377,7 @@ class RoccatGui(Adw.ApplicationWindow):
             else ((255, 0, 0), (255, 80, 0), (230, 140, 0))
         )
         aimo_group = Adw.PreferencesGroup(title="AIMO-Modus")
-        aimo_group.set_description(
-            "AIMO-Signatur-Farbverlauf (Rot → Orange → Gelb) über das ganze Gerät, "
-            "software-gerendert (Annäherung, kein belegter Original-Swarm-Algorithmus)."
-        )
+        aimo_group.set_description("Software-Annäherung · kein belegter Original-Algorithmus")
         self.aimo_btn = Gtk.Button()
         self.aimo_btn.add_css_class("pill")
         self.aimo_btn.set_hexpand(True)
@@ -373,46 +414,46 @@ class RoccatGui(Adw.ApplicationWindow):
 
         speed_group = Adw.PreferencesGroup()
         self.speed_value = self._add_channel(
-            speed_group, "Speed", self.speed, format_value=self._format_speed, value_width=48
+            speed_group, "Geschwindigkeit", self.speed, format_value=self._format_speed, value_width=48
         )
         self.bpm = Adw.SpinRow.new_with_range(30, 240, 1)
-        self.bpm.set_title("Beat tempo · BPM")
-        self.bpm.set_subtitle("Beat mode; multiplied by Speed")
+        self.bpm.set_title("Tempo · BPM")
+        self.bpm.set_subtitle("Beat-Modus · mit Geschwindigkeit multipliziert")
         self.bpm.set_value(120)
         self.bpm.connect("notify::value", lambda *_: self._settings_changed())
         speed_group.add(self.bpm)
-        self.reverse = Adw.SwitchRow(title="Reverse flow")
+        self.reverse = Adw.SwitchRow(title="Richtung umkehren")
         self.reverse.connect("notify::active", lambda *_: self._settings_changed())
         speed_group.add(self.reverse)
         content.append(speed_group)
-        hint = Gtk.Label(label="Light by Push: whole-keyboard flash on key press. Host input permission required.", xalign=0, wrap=True)
+        hint = Gtk.Label(label="Tastendruck-Effekt: gesamtes Keyboard blinkt. Zugriff auf Eingabegeräte erforderlich.", xalign=0, wrap=True)
         hint.add_css_class("dim-label")
         content.append(hint)
 
-        color_group = Adw.PreferencesGroup(title="Color")
-        self.red_value = self._add_channel(color_group, "Red", self.r)
-        self.green_value = self._add_channel(color_group, "Green", self.g)
-        self.blue_value = self._add_channel(color_group, "Blue", self.b)
-        self.brightness_value = self._add_channel(color_group, "Brightness", self.brightness)
+        color_group = Adw.PreferencesGroup(title="Farbe")
+        self.red_value = self._add_channel(color_group, "Rot", self.r)
+        self.green_value = self._add_channel(color_group, "Grün", self.g)
+        self.blue_value = self._add_channel(color_group, "Blau", self.b)
+        self.brightness_value = self._add_channel(color_group, "Helligkeit", self.brightness)
         content.append(color_group)
 
-        light_group = Adw.PreferencesGroup(title="One light")
+        light_group = Adw.PreferencesGroup(title="Einzelne Lichtzone")
         light_group.add(self.zone)
         content.append(light_group)
 
         actions = Gtk.Box(spacing=12, homogeneous=True)
-        all_btn = Gtk.Button(label="All lights")
+        all_btn = Gtk.Button(label="Alle anwenden")
         all_btn.add_css_class("suggested-action")
         all_btn.add_css_class("pill")
         all_btn.connect("clicked", lambda _: self.apply_all())
-        one_btn = Gtk.Button(label="Selected light")
+        one_btn = Gtk.Button(label="Zone anwenden")
         one_btn.add_css_class("pill")
         one_btn.add_css_class("action-secondary")
         one_btn.connect("clicked", lambda _: self.apply_one())
         actions.append(all_btn)
         actions.append(one_btn)
 
-        self.status_label = Gtk.Label(label="No device selected")
+        self.status_label = Gtk.Label(label="Offline · kein Gerät ausgewählt")
         self.status_label.set_halign(Gtk.Align.START)
         self.status_label.set_wrap(True)
         self.status_label.set_xalign(0)
@@ -425,6 +466,28 @@ class RoccatGui(Adw.ApplicationWindow):
         self.status_label.set_margin_end(12)
         status_card.append(self.status_label)
 
+        # Swarm separates effect choices and LED/color preview into two compact panels.
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        left.add_css_class("swarm-panel")
+        left.set_hexpand(True)
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        right.add_css_class("swarm-panel")
+        right.set_hexpand(True)
+        for heading, panel in (("// EFFEKTE & AIMO", left), ("// FARBE & VORSCHAU", right)):
+            label = Gtk.Label(label=heading, xalign=0)
+            label.add_css_class("swarm-eyebrow")
+            panel.append(label)
+        for widget in (aimo_group, effects, speed_group, hint):
+            content.remove(widget)
+            left.append(widget)
+        for widget in (self.swatch, self.led_preview, readout, self.preview_detail,
+                       presets, color_group, light_group):
+            content.remove(widget)
+            right.append(widget)
+        columns = Gtk.Box(spacing=12)
+        columns.append(left)
+        columns.append(right)
+        content.append(columns)
         clamp = Adw.Clamp()
         clamp.set_maximum_size(980)
         clamp.set_tightening_threshold(720)
@@ -433,19 +496,78 @@ class RoccatGui(Adw.ApplicationWindow):
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_vexpand(True)
         scrolled.set_child(clamp)
+        self.lighting_scroll = scrolled
 
-        bottom = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        bottom.set_margin_top(8)
-        bottom.set_margin_bottom(8)
-        bottom.set_margin_start(12)
-        bottom.set_margin_end(12)
+        bottom = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        bottom.add_css_class("swarm-footer")
+        profile_bar = Gtk.Box(spacing=12)
+        profile_title = Gtk.Label(label="// SITZUNGSPROFILE")
+        profile_title.add_css_class("swarm-eyebrow")
+        profile_bar.append(profile_title)
+        self.profile_selector = Gtk.DropDown.new_from_strings(
+            [f"Profil {number}" for number in range(1, 6)]
+        )
+        self.profile_selector.set_tooltip_text("Lokale Beleuchtungseinstellungen dieser Sitzung; keine Geräteprofile")
+        self.profile_selector.connect("notify::selected", self._restore_profile)
+        profile_bar.append(self.profile_selector)
+        self.profile_save = Gtk.Button(label="Profil merken")
+        self.profile_save.add_css_class("swarm-secondary")
+        self.profile_save.set_tooltip_text("Nur während dieser Sitzung gespeichert")
+        self.profile_save.connect("clicked", self._save_profile)
+        profile_bar.append(self.profile_save)
+        profile_bar.append(Gtk.Label(label="Nur in dieser Sitzung · keine Hardwareprofile"))
+        bottom.append(profile_bar)
         bottom.append(actions)
         bottom.append(status_card)
+
+        overview = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                           margin_top=28, margin_start=28, margin_end=28)
+        overview.add_css_class("swarm-content")
+        overview_heading = Gtk.Label(label="// GERÄTEÜBERSICHT", xalign=0)
+        overview_heading.add_css_class("swarm-accent")
+        overview.append(overview_heading)
+        overview_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14,
+                                 margin_top=20, margin_bottom=20, margin_start=20, margin_end=20)
+        overview_card.add_css_class("swarm-panel")
+        self.overview_device = Gtk.Label(label="Kein Gerät verbunden", xalign=0)
+        self.overview_device.add_css_class("title-1")
+        overview_card.append(self.overview_device)
+        self.overview_description = Gtk.Label(label="Offline-Vorschau · Gerät anschließen, um Beleuchtung anzuwenden.",
+                                              xalign=0, wrap=True)
+        overview_card.append(self.overview_description)
+        open_lighting = Gtk.Button(label="Beleuchtung öffnen →")
+        open_lighting.set_halign(Gtk.Align.START)
+        open_lighting.add_css_class("swarm-apply")
+        open_lighting.connect("clicked", lambda *_: self.lighting_tab.set_active(True))
+        overview_card.append(open_lighting)
+        overview.append(overview_card)
+        overview_note = Gtk.Label(label="AIMO · Farbe · Effekte   |   Unterstützt: Kone AIMO und Vulcan AIMO",
+                                  xalign=0, wrap=True)
+        overview_note.add_css_class("swarm-muted")
+        overview.append(overview_note)
+
+        self.view_stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
+        self.view_stack.add_named(overview, "overview")
+        self.view_stack.add_named(scrolled, "lighting")
+        self.view_stack.set_visible_child_name("overview")
+        nav = Gtk.Box(spacing=4)
+        nav.add_css_class("swarm-nav")
+        overview_tab = Gtk.ToggleButton(label="ÜBERSICHT")
+        overview_tab.add_css_class("swarm-tab")
+        self.lighting_tab = Gtk.ToggleButton(label="BELEUCHTUNG")
+        self.lighting_tab.add_css_class("swarm-tab")
+        self.lighting_tab.set_group(overview_tab)
+        overview_tab.set_active(True)
+        overview_tab.connect("toggled", lambda button: self.view_stack.set_visible_child_name("overview") if button.get_active() else None)
+        self.lighting_tab.connect("toggled", lambda button: self.view_stack.set_visible_child_name("lighting") if button.get_active() else None)
+        nav.append(overview_tab)
+        nav.append(self.lighting_tab)
         toolbar = Adw.ToolbarView()
-        toolbar.set_content(scrolled)
+        toolbar.add_top_bar(nav)
+        toolbar.set_content(self.view_stack)
         toolbar.add_bottom_bar(bottom)
 
-        main_page = Adw.NavigationPage(title="RGB")
+        main_page = Adw.NavigationPage(title="Beleuchtung")
         main_page.set_child(toolbar)
         root.set_sidebar(sidebar)
         root.set_content(main_page)
@@ -462,10 +584,35 @@ class RoccatGui(Adw.ApplicationWindow):
         self._set_controls()
         self._rebuild_aimo_button()
 
+    def _save_profile(self, *_args) -> None:
+        """Keep only local lighting parameters; never claim a device profile write."""
+        slot = self.profile_selector.get_selected()
+        self._session_profiles[slot] = (
+            int(self.r.get_value()), int(self.g.get_value()),
+            int(self.b.get_value()), int(self.brightness.get_value()),
+            self.speed.get_value(), int(self.bpm.get_value()), self.reverse.get_active(),
+        )
+        self._set_status(f"Sitzungsprofil {slot + 1} gemerkt · nicht auf Hardware gespeichert")
+
+    def _restore_profile(self, *_args) -> None:
+        slot = self.profile_selector.get_selected()
+        saved = self._session_profiles[slot]
+        if saved is None:
+            self._set_status(f"Sitzungsprofil {slot + 1} ist leer")
+            return
+        for scale, value in zip((self.r, self.g, self.b, self.brightness, self.speed), saved[:5]):
+            scale.set_value(value)
+        self.bpm.set_value(saved[5])
+        self.reverse.set_active(saved[6])
+        self._sync_preview()
+        self._set_status(f"Sitzungsprofil {slot + 1} geladen · zum Übertragen Anwenden wählen")
+
     def _set_controls(self):
         enabled = self.selected_index is not None and self._selected_kind in {"kone", "vulcan"} and not self._busy
         locked = self._aimo_active and self.aimo_master.get_active()
         self._actions.set_sensitive(enabled and not locked)
+        self.profile_save.set_sensitive(enabled and not locked)
+        self.profile_selector.set_sensitive(not self._busy and not locked)
         self._effects_widget.set_sensitive(enabled and not locked)
         for widget in self._manual_widgets or ():
             widget.set_sensitive(enabled and not locked)
@@ -499,7 +646,7 @@ class RoccatGui(Adw.ApplicationWindow):
             return
         self._busy = True
         self._set_controls()
-        self._set_status("Working…")
+        self._set_status("Wird ausgeführt …")
         def done(result):
             self._busy = False
             if not self._closed:
@@ -557,7 +704,7 @@ class RoccatGui(Adw.ApplicationWindow):
         scale.set_draw_value(False)
         scale.set_hexpand(True)
         scale.set_value(value)
-        scale.set_tooltip_text("Effect speed, 0.25× to 4×")
+        scale.set_tooltip_text("Effektgeschwindigkeit: 0,25× bis 4×")
         return scale
 
     @staticmethod
@@ -635,10 +782,10 @@ class RoccatGui(Adw.ApplicationWindow):
             self._schedule_effect_respawn()
             return
         if brightness >= 255:
-            self.preview_detail.set_label("Full brightness")
+            self.preview_detail.set_label("Volle Helligkeit")
         else:
             percent = round(brightness * 100 / 255)
-            self.preview_detail.set_label(f"Brightness {percent}% · device receives {device_hex}")
+            self.preview_detail.set_label(f"Helligkeit {percent}% · Gerät erhält {device_hex}")
         self._preview_colors = [sent] * (11 if self._selected_kind == "kone" else 144)
         self.led_preview.queue_draw()
         if self._swatch_css is not None:
@@ -672,9 +819,9 @@ class RoccatGui(Adw.ApplicationWindow):
         if self._selected_kind == "kone" and 0 <= index < len(roccat_rgb.KONE_LED_NAMES):
             self.zone.set_subtitle(roccat_rgb.KONE_LED_NAMES[index])
         elif self._selected_kind == "vulcan":
-            self.zone.set_subtitle(f"Key {index} of {roccat_rgb.VULCAN_KEY_COUNT}")
+            self.zone.set_subtitle(f"Taste {index} von {roccat_rgb.VULCAN_KEY_COUNT}")
         else:
-            self.zone.set_subtitle("Pick a device to name this light")
+            self.zone.set_subtitle("Gerät für die Lichtzone auswählen")
 
     def _clear_rows(self) -> None:
         while True:
@@ -682,6 +829,13 @@ class RoccatGui(Adw.ApplicationWindow):
             if row is None:
                 break
             self.devices_store.remove(row)
+
+    def _show_offline(self) -> None:
+        self.connection_label.set_label("● Offline · kein Gerät angeschlossen")
+        self.overview_device.set_label("Kein Gerät verbunden")
+        self.overview_description.set_label("Offline-Vorschau · Gerät anschließen, um Beleuchtung anzuwenden.")
+        self.device_title.set_label("Kein Gerät ausgewählt")
+        self.device_subtitle.set_label("Offline-Vorschau · Änderungen werden erst mit angeschlossenem Gerät übertragen.")
 
     def load_devices(self) -> None:
         if self._busy:
@@ -691,6 +845,7 @@ class RoccatGui(Adw.ApplicationWindow):
         self.selected_index = None
         self._selected_kind = ""
         self._clear_rows()
+        self._show_offline()
         self._set_controls()
         self._run_command(["list", "--json"], self._devices_loaded)
 
@@ -698,12 +853,11 @@ class RoccatGui(Adw.ApplicationWindow):
         devices, error = _load_bridge().parse_device_json(proc.stdout, proc.returncode, proc.stderr)
         if error:
             self.empty_hint.set_visible(True)
-            self._set_status(f"Device scan failed: {error}")
+            self._set_status(f"Gerätesuche fehlgeschlagen: {error}")
             return
         if not devices:
             self.empty_hint.set_visible(True)
-            self.device_title.set_label("RGB controller")
-            self._set_status("No Roccat devices found")
+            self._set_status("Offline · keine ROCCAT-Geräte gefunden")
             return
         for fallback, dev in enumerate(devices):
             index = int(dev["index"]) if "index" in dev else fallback
@@ -728,6 +882,7 @@ class RoccatGui(Adw.ApplicationWindow):
         self._stop_aimo(restore=False)
         self.selected_index = row.index
         self.devices_store.select_row(row)
+        self.empty_hint.set_visible(False)
         pid = int(row.device.get("product_id") or 0)
         kind = roccat_rgb.kind_for_product(pid)
         self._selected_kind = kind
@@ -736,18 +891,22 @@ class RoccatGui(Adw.ApplicationWindow):
             self.zone_row.set_title("LED")
         elif kind == "vulcan":
             self.zone.set_range(0, 143)
-            self.zone_row.set_title("Key")
+            self.zone_row.set_title("Taste")
         else:
             self.zone.set_range(0, 143)
-            self.zone_row.set_title("Light")
+            self.zone_row.set_title("Lichtzone")
         self._sync_zone_hint()
         title = row.get_title()
         self.device_title.set_label(str(title))
         self.device_subtitle.set_label(row.get_subtitle() or "")
+        self.overview_device.set_label(str(title))
+        self.overview_description.set_label("RGB-Steuerung verfügbar" if kind in {"kone", "vulcan"}
+                                            else "Gerät erkannt · RGB für dieses Modell nicht unterstützt")
+        self.connection_label.set_label(f"● Verbunden · {title}")
         self._set_controls()
         self._sync_preview()
-        self._set_status(f"Selected: {title}" if kind in {"kone", "vulcan"}
-                         else f"Detected: {title}. RGB control is not supported for this model yet.")
+        self._set_status(f"Ausgewählt: {title}" if kind in {"kone", "vulcan"}
+                         else f"Erkannt: {title}. RGB-Steuerung für dieses Modell nicht unterstützt.")
 
     def _report(self, proc: subprocess.CompletedProcess[str], success: str) -> None:
         if proc.returncode == 0:
@@ -836,7 +995,7 @@ class RoccatGui(Adw.ApplicationWindow):
             )
         except Exception as exc:
             self.stop_effect(restore=False)
-            self._set_status(f"Effect error: {exc}")
+            self._set_status(f"Effektfehler: {exc}")
             return
         self._effect_proc = proc
         generation = self._effect_gen
@@ -852,7 +1011,7 @@ class RoccatGui(Adw.ApplicationWindow):
             self._effect_proc = None
             self.stop_effect(restore=False)
             self._sync_preview()
-            self._set_status(err or "Effect stopped")
+            self._set_status(err or "Effekt beendet")
             return False
 
         GLib.timeout_add(100, check_exit)
@@ -889,8 +1048,8 @@ class RoccatGui(Adw.ApplicationWindow):
         self._effect_frame += 1
         red, green, blue = colors[0]
         shown = f"#{red:02X}{green:02X}{blue:02X}"
-        self.preview_detail.set_label("Waiting for keyboard input · hardware preview only" if self._effect_name == "reactive"
-                                      else f"{roccat_rgb.EFFECT_LABELS[self._effect_name]} · {shown}")
+        self.preview_detail.set_label("Warte auf Tastendruck · Vorschau nur am Gerät" if self._effect_name == "reactive"
+                                      else f"{EFFECT_UI_LABELS[self._effect_name]} · {shown}")
         if self._swatch_css is not None:
             self._swatch_css.load_from_string(".rgb-swatch { background-color: " + shown + "; }")
         return True
@@ -906,7 +1065,7 @@ class RoccatGui(Adw.ApplicationWindow):
         self._effect_source = GLib.timeout_add(84, self._effect_tick)
         self._spawn_effect_process()
         if self._effect_proc is not None:
-            self._set_status(f"{roccat_rgb.EFFECT_LABELS[name]} running")
+            self._set_status(f"{EFFECT_UI_LABELS[name]} läuft")
 
     def stop_effect(self, restore: bool = True) -> None:
         was_running = self._effect_name is not None
