@@ -274,6 +274,34 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(report[2:5], [255, 0, 0])
         self.assertNotEqual(report[2:5], report[2 + 5 * 4:5 + 5 * 4])
 
+    def test_aimo_mode_wave_gradient_runs_end_to_end(self):
+        """AIMO-Signatur (aimo_mode Profile) läuft durch die Bridge und schreibt
+        Kone-HID-Reports mit den Signatur-Farbwerten (REA-Stopps 255,0,0;255,80,0;
+        230,140,0). Das verdrahtet GUI->CLI->Bridge zusätzlich auf Modul-Ebene."""
+        import aimo_mode
+
+        args = aimo_mode.aimo_cli_args(0, 100)
+        # Kurze Dauer, damit der Endlos-Loop des wave-Effekts terminiert.
+        args += ["--duration", "0.05", "--frame-interval", "0.01"]
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = bridge.main(args)
+        self.assertEqual(code, 0)
+        reports = [
+            item
+            for dev in self.fake.created
+            for item in dev.features
+            if isinstance(item, list) and item and item[0] == 0x0D
+        ]
+        self.assertGreaterEqual(len(reports), 1)
+        # Kone-Report: [0x0D, 0x2E, RRGGBBAA x 11, brightness] => 46 Bytes.
+        report = reports[0]
+        self.assertEqual(report[:2], [0x0D, 0x2E])
+        self.assertEqual(len(report), 46)
+        # Erste LED muss dem Rot-Stopp der Signatur entsprechen.
+        self.assertEqual(report[2:5], [255, 0, 0])
+        self.assertTrue(any(dev.closed for dev in self.fake.created))
+
     def test_effect_without_device_does_not_open_hid(self):
         self.fake.devices = []
         stderr = io.StringIO()

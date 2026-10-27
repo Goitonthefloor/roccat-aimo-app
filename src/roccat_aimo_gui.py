@@ -19,6 +19,11 @@ from gi.repository import Gtk, Adw, Gdk, GLib
 
 import roccat_rgb
 
+try:
+    import aimo_mode
+except ImportError:  # Fallback: GUI auch ohne installiertes Profilmodul startbar
+    aimo_mode = None
+
 
 STATIC_CSS = """
 .rgb-swatch {
@@ -114,6 +119,10 @@ def resolve_cli() -> list[str]:
     return ["roccat-aimo-cli"]
 
 
+def _clamp255(value: int) -> int:
+    return max(0, min(255, int(value)))
+
+
 def run_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [*resolve_cli(), *args],
@@ -170,6 +179,9 @@ class RoccatGui(Adw.ApplicationWindow):
         self._effect_gen = 0
         self._effect_restart = None
         self._effect_buttons = {}
+        self._aimo_active = False
+        self._aimo_source = None
+        self._manual_references = {}
         self.last_report = {}
         self._swatch_css = None
 
@@ -310,6 +322,55 @@ class RoccatGui(Adw.ApplicationWindow):
         effects.append(stop)
         content.append(effects)
 
+        # AIMO-Modus: Signatur-Look (Rot→Orange→Gelb) über das ganze Gerät,
+        # software-gerendert wie Swarm. Button = einzeln aktivieren;
+        # die AIMO-Radio-Auswahl deaktiviert alle manuellen Bedienelemente
+        # und armiert den Modus vollständig (umschaltbar ohne Neustart).
+        # Farbstopps und CLI-/Preview-Logik kommen aus aimo_mode (Skills aus
+        # docs/aimo_reverse_engineering.md, single source of truth).
+        self._aimo_signature = (
+            aimo_mode.AIMO_SIGNATURE if aimo_mode is not None
+            else ((255, 0, 0), (255, 80, 0), (230, 140, 0))
+        )
+        aimo_group = Adw.PreferencesGroup(title="AIMO-Modus")
+        aimo_group.set_description(
+            "AIMO-Signatur-Farbverlauf (Rot → Orange → Gelb) über das ganze Gerät, "
+            "software-gerendert (Annäherung, kein belegter Original-Swarm-Algorithmus)."
+        )
+        self.aimo_btn = Gtk.Button()
+        self.aimo_btn.add_css_class("pill")
+        self.aimo_btn.set_hexpand(True)
+        aimo_btn_row = Adw.ActionRow(title="AIMO-Signatur aktivieren")
+        aimo_btn_row.set_activatable_widget(self.aimo_btn)
+        aimo_btn_row.set_subtitle("Schaltet den AIMO-Voll-Gradient mit einem Klick an/aus")
+        aimo_btn_row.add_suffix(self.aimo_btn)
+        aimo_group.add(aimo_btn_row)
+        self.manual_radio = Gtk.CheckButton()
+        self.manual_radio.set_active(True)
+        manual_row = Adw.ActionRow(title="Manuell")
+        manual_row.add_suffix(self.manual_radio)
+        manual_row.set_activatable_widget(self.manual_radio)
+        aimo_group.add(manual_row)
+        self.aimo_master = Gtk.CheckButton()
+        self.aimo_master.set_group(self.manual_radio)
+        master_row = Adw.ActionRow(title="AIMO-Modus (komplett)")
+        master_row.set_subtitle(
+            "Deaktiviert alle manuellen Bedienelemente und armiert den AIMO-Modus vollständig"
+        )
+        master_row.add_suffix(self.aimo_master)
+        master_row.set_activatable_widget(self.aimo_master)
+        self.aimo_master.connect("toggled", lambda *_args: self._on_aimo_master_changed())
+        aimo_group.add(master_row)
+        content.append(aimo_group)
+
+        self._aimo_btn_label = "AIMO an"
+        self.aimo_btn.connect("clicked", lambda _: self.toggle_aimo())
+        self._rebuild_aimo_button()
+
+        # Widgets, die der AIMO-Master (Radio) sperren soll. Wird am Ende von
+        # __init__ vervollständigt (speed_group/actions existieren dort erst).
+        self._manual_widgets = None
+
         speed_group = Adw.PreferencesGroup()
         self.speed_value = self._add_channel(
             speed_group, "Speed", self.speed, format_value=self._format_speed, value_width=48
@@ -393,15 +454,30 @@ class RoccatGui(Adw.ApplicationWindow):
         self._sync_zone_hint()
         self._actions = actions
         self._effects_widget = effects
+        self._manual_widgets = [
+            presets, effects, self.hex_entry, self.r, self.g, self.b,
+            self.brightness, self.speed, self.speed_value, self.bpm,
+            self.reverse, self.zone_row, self._actions,
+        ]
         self._set_controls()
+        self._rebuild_aimo_button()
 
     def _set_controls(self):
         enabled = self.selected_index is not None and self._selected_kind in {"kone", "vulcan"} and not self._busy
-        self._actions.set_sensitive(enabled)
-        self._effects_widget.set_sensitive(enabled)
+        locked = self._aimo_active and self.aimo_master.get_active()
+        self._actions.set_sensitive(enabled and not locked)
+        self._effects_widget.set_sensitive(enabled and not locked)
+        for widget in self._manual_widgets or ():
+            widget.set_sensitive(enabled and not locked)
         self.devices_store.set_sensitive(not self._busy)
         self.refresh_btn.set_sensitive(not self._busy)
         self._effect_buttons["reactive"].set_sensitive(self._selected_kind == "vulcan")
+        # Radio-Semantik: Bei aktivem Master-Switch ist auch der Einzel-Button
+        # gesperrt — der Master ist die einzige Schaltfläche, die den Modus
+        # steuert. Aus schalten geht nur über den Master selbst.
+        self.aimo_btn.set_sensitive(enabled and not self.aimo_master.get_active())
+        self.aimo_master.set_sensitive(enabled)
+        self.manual_radio.set_sensitive(enabled)
 
     def _settings_changed(self):
         if self._effect_name:
@@ -611,6 +687,7 @@ class RoccatGui(Adw.ApplicationWindow):
         if self._busy:
             return
         self.stop_effect(restore=False)
+        self._stop_aimo(restore=False)
         self.selected_index = None
         self._selected_kind = ""
         self._clear_rows()
@@ -648,6 +725,7 @@ class RoccatGui(Adw.ApplicationWindow):
 
     def select_device(self, row) -> None:
         self.stop_effect(restore=False)
+        self._stop_aimo(restore=False)
         self.selected_index = row.index
         self.devices_store.select_row(row)
         pid = int(row.device.get("product_id") or 0)
@@ -697,6 +775,7 @@ class RoccatGui(Adw.ApplicationWindow):
     def _on_close(self, *_args) -> bool:
         self._closed = True
         self.stop_effect(restore=False)
+        self._stop_aimo(restore=False)
         return False
 
     def _highlight_effect(self, name: str | None) -> None:
@@ -820,6 +899,7 @@ class RoccatGui(Adw.ApplicationWindow):
         if self.selected_index is None or self._selected_kind not in {"kone", "vulcan"} or self._busy:
             return
         self.stop_effect(restore=False)
+        self._stop_aimo(restore=False)
         self._effect_name = name
         self._effect_frame = 0
         self._highlight_effect(name)
@@ -843,6 +923,168 @@ class RoccatGui(Adw.ApplicationWindow):
             self._sync_preview()
             self.apply_all()
 
+    def _aimo_cli_args(self) -> list[str]:
+        """CLI-Args für die AIMO-Signatur-Animation auf dem Gerät.
+
+        Bezieht die Signatur-Farbstopps und die Befehlssignatur aus aimo_mode
+        (Skills aus docs/aimo_reverse_engineering.md) — eine Quelle für CLI und
+        Vorschau. Fallback nur, wenn das Profilmodul nicht installiert ist.
+        """
+        brightness = max(0, min(100, int(self.brightness.get_value() * 100 / 255)))
+        if aimo_mode is not None:
+            return aimo_mode.aimo_cli_args(self.selected_index, brightness)
+        signature = ";".join(f"{r},{g},{b}" for r, g, b in self._aimo_signature)
+        return [
+            "aimo-effect", "wave",
+            "--mode", "gradient",
+            "--theme", signature,
+            "--direction", "h",
+            "--brightness", str(brightness),
+            "--index", str(self.selected_index),
+        ]
+
+    def _aimo_colors(self, count: int) -> list[tuple[int, int, int]]:
+        """Preview-Farben für den AIMO-Signatur-Verlauf (delegiert an aimo_mode)."""
+        try:
+            if aimo_mode is not None:
+                return aimo_mode.aimo_preview_colors(
+                    self._selected_kind or "vulcan",
+                    self._aimo_frame,
+                    int(self.brightness.get_value()),
+                )
+            import aimo_effects
+        except ImportError:
+            return roccat_rgb.effect_colors(
+                "rainbow-flow", 255, 80, 0, int(self.brightness.get_value()),
+                self._aimo_frame, count, 1.0,
+            )
+        stops = list(self._aimo_signature)
+        if self._selected_kind == "kone":
+            num, pos = aimo_effects.kone_num_leds(), aimo_effects.kone_position
+        else:
+            num, pos = aimo_effects.vulcan_num_leds(), aimo_effects.vulcan_position
+        phase = (self._aimo_frame / 24.0) % 1.0
+        frame = aimo_effects.render_wave(
+            phase,
+            {"mode": "gradient", "direction": "h", "spread": 1.0,
+             "stops": stops, "sat": 1.0, "val": 1.0},
+            pos, num,
+        )
+        brightness = max(0, min(255, int(self.brightness.get_value())))
+        if brightness >= 255:
+            return frame
+        factor = brightness / 255.0
+        return [tuple(int(ch * factor) for ch in color) for color in frame]
+
+    def _rebuild_aimo_button(self) -> None:
+        """Button-Beschriftung und visueller Zustand (aktiv = suggested-action)."""
+        active = self._aimo_active
+        label = "AIMO aus" if active else "AIMO an"
+        self._aimo_btn_label = label
+        if active:
+            self.aimo_btn.add_css_class("suggested-action")
+        else:
+            self.aimo_btn.remove_css_class("suggested-action")
+        self.aimo_btn.set_label(label)
+        self.aimo_btn.set_tooltip_text(
+            "AIMO-Modus ausschalten" if active else "AIMO-Signatur-Look aktivieren"
+        )
+
+    def _stop_aimo(self, restore: bool = True) -> None:
+        was_active = self._aimo_active
+        self._aimo_active = False
+        if self.aimo_master.get_active():
+            self.manual_radio.set_active(True)
+        if self._aimo_source is not None:
+            GLib.source_remove(self._aimo_source)
+            self._aimo_source = None
+        self._stop_effect_process()
+        self._rebuild_aimo_button()
+        self._highlight_effect(None)
+        self._set_controls()
+        if restore and was_active:
+            self._sync_preview()
+            self.apply_all()
+
+    def toggle_aimo(self) -> None:
+        if self.selected_index is None or self._selected_kind not in {"kone", "vulcan"} or self._busy:
+            return
+        if self._aimo_active:
+            self._stop_aimo(restore=self.aimo_master.get_active())
+            self._set_status("AIMO-Modus aus")
+            return
+        self.stop_effect(restore=False)
+        self._aimo_active = True
+        self._aimo_frame = 0
+        self._rebuild_aimo_button()
+        self._spawn_aimo_process()
+        if not self._aimo_active:
+            return
+        self._aimo_source = GLib.timeout_add(84, self._aimo_tick)
+        self._set_status("AIMO-Modus aktiv")
+
+    def _on_aimo_master_changed(self) -> None:
+        if self.aimo_master.get_active():
+            if not self._aimo_active:
+                self.toggle_aimo()
+            if self._aimo_active:
+                self._set_status("AIMO-Modus komplett scharf geschaltet")
+        else:
+            if self._aimo_active:
+                self._stop_aimo(restore=False)
+                self._set_status("AIMO-Modus aus")
+        self._set_controls()
+
+    def _aimo_tick(self) -> bool:
+        if not self._aimo_active:
+            self._aimo_source = None
+            return False
+        count = roccat_rgb.KONE_LED_COUNT if self._selected_kind == "kone" else roccat_rgb.VULCAN_KEY_COUNT
+        colors = self._aimo_colors(count)
+        self._preview_colors = colors
+        self.led_preview.queue_draw()
+        self._aimo_frame += 1
+        shown = "#%02X%02X%02X" % tuple(_clamp255(ch) for ch in colors[0])
+        self.preview_detail.set_label(f"AIMO-Modus · {shown}")
+        if self._swatch_css is not None:
+            self._swatch_css.load_from_string(".rgb-swatch { background-color: " + shown + "; }")
+        return True
+
+    def _spawn_aimo_process(self) -> None:
+        self._stop_effect_process()
+        if not self._aimo_active:
+            return
+        try:
+            proc = subprocess.Popen(
+                [*resolve_cli(), *self._aimo_cli_args()],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except Exception as exc:
+            self._stop_aimo(restore=False)
+            self._set_status(f"AIMO error: {exc}")
+            return
+        self._effect_proc = proc
+        generation = self._effect_gen
+
+        def check_exit():
+            if generation != self._effect_gen:
+                return False
+            if proc.poll() is None:
+                return True
+            err = (proc.stderr.read() if proc.stderr else "").strip()
+            if proc.stderr:
+                proc.stderr.close()
+            self._effect_proc = None
+            if not self._aimo_active:
+                return False
+            self._stop_aimo(restore=False)
+            self._set_status(err or "AIMO-Modus beendet")
+            return False
+
+        GLib.timeout_add(100, check_exit)
+
     def apply_preset(self, color: tuple[int, int, int]) -> None:
         self.r.set_value(color[0])
         self.g.set_value(color[1])
@@ -854,12 +1096,14 @@ class RoccatGui(Adw.ApplicationWindow):
         if self.selected_index is None or self._selected_kind not in {"kone", "vulcan"} or self._busy:
             return
         self.stop_effect(restore=False)
+        self._stop_aimo(restore=False)
         self._run_command(self._color_args(), lambda proc: self._report(proc, "RGB applied to all lights"))
 
     def apply_one(self) -> None:
         if self.selected_index is None or self._selected_kind not in {"kone", "vulcan"} or self._busy:
             return
         self.stop_effect(restore=False)
+        self._stop_aimo(restore=False)
         self._run_command(self._color_args(int(self.zone.get_value())),
                           lambda proc: self._report(proc, "RGB applied to the selected light"))
 
