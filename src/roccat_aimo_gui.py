@@ -324,7 +324,7 @@ class RoccatGui(Adw.ApplicationWindow):
 
         # AIMO-Modus: Signatur-Look (Rot→Orange→Gelb) über das ganze Gerät,
         # software-gerendert wie Swarm. Button = einzeln aktivieren;
-        # der Master-"Radio"-Schalter deaktiviert alle anderen Bedienelemente
+        # die AIMO-Radio-Auswahl deaktiviert alle manuellen Bedienelemente
         # und armiert den Modus vollständig (umschaltbar ohne Neustart).
         # Farbstopps und CLI-/Preview-Logik kommen aus aimo_mode (Skills aus
         # docs/aimo_reverse_engineering.md, single source of truth).
@@ -335,7 +335,7 @@ class RoccatGui(Adw.ApplicationWindow):
         aimo_group = Adw.PreferencesGroup(title="AIMO-Modus")
         aimo_group.set_description(
             "AIMO-Signatur-Farbverlauf (Rot → Orange → Gelb) über das ganze Gerät, "
-            "software-gerendert wie die Original-Swarm-Software."
+            "software-gerendert (Annäherung, kein belegter Original-Swarm-Algorithmus)."
         )
         self.aimo_btn = Gtk.Button()
         self.aimo_btn.add_css_class("pill")
@@ -345,12 +345,22 @@ class RoccatGui(Adw.ApplicationWindow):
         aimo_btn_row.set_subtitle("Schaltet den AIMO-Voll-Gradient mit einem Klick an/aus")
         aimo_btn_row.add_suffix(self.aimo_btn)
         aimo_group.add(aimo_btn_row)
-        self.aimo_master = Adw.SwitchRow(title="AIMO-Modus (komplett)")
-        self.aimo_master.set_subtitle(
-            "Deaktiviert alle anderen Bedienelemente und armiert den AIMO-Modus vollständig"
+        self.manual_radio = Gtk.CheckButton()
+        self.manual_radio.set_active(True)
+        manual_row = Adw.ActionRow(title="Manuell")
+        manual_row.add_suffix(self.manual_radio)
+        manual_row.set_activatable_widget(self.manual_radio)
+        aimo_group.add(manual_row)
+        self.aimo_master = Gtk.CheckButton()
+        self.aimo_master.set_group(self.manual_radio)
+        master_row = Adw.ActionRow(title="AIMO-Modus (komplett)")
+        master_row.set_subtitle(
+            "Deaktiviert alle manuellen Bedienelemente und armiert den AIMO-Modus vollständig"
         )
-        self.aimo_master.connect("notify::active", lambda *_args: self._on_aimo_master_changed())
-        aimo_group.add(self.aimo_master)
+        master_row.add_suffix(self.aimo_master)
+        master_row.set_activatable_widget(self.aimo_master)
+        self.aimo_master.connect("toggled", lambda *_args: self._on_aimo_master_changed())
+        aimo_group.add(master_row)
         content.append(aimo_group)
 
         self._aimo_btn_label = "AIMO an"
@@ -467,6 +477,7 @@ class RoccatGui(Adw.ApplicationWindow):
         # steuert. Aus schalten geht nur über den Master selbst.
         self.aimo_btn.set_sensitive(enabled and not self.aimo_master.get_active())
         self.aimo_master.set_sensitive(enabled)
+        self.manual_radio.set_sensitive(enabled)
 
     def _settings_changed(self):
         if self._effect_name:
@@ -982,12 +993,15 @@ class RoccatGui(Adw.ApplicationWindow):
     def _stop_aimo(self, restore: bool = True) -> None:
         was_active = self._aimo_active
         self._aimo_active = False
+        if self.aimo_master.get_active():
+            self.manual_radio.set_active(True)
         if self._aimo_source is not None:
             GLib.source_remove(self._aimo_source)
             self._aimo_source = None
         self._stop_effect_process()
         self._rebuild_aimo_button()
         self._highlight_effect(None)
+        self._set_controls()
         if restore and was_active:
             self._sync_preview()
             self.apply_all()
@@ -1004,6 +1018,8 @@ class RoccatGui(Adw.ApplicationWindow):
         self._aimo_frame = 0
         self._rebuild_aimo_button()
         self._spawn_aimo_process()
+        if not self._aimo_active:
+            return
         self._aimo_source = GLib.timeout_add(84, self._aimo_tick)
         self._set_status("AIMO-Modus aktiv")
 
@@ -1011,7 +1027,8 @@ class RoccatGui(Adw.ApplicationWindow):
         if self.aimo_master.get_active():
             if not self._aimo_active:
                 self.toggle_aimo()
-            self._set_status("AIMO-Modus komplett scharf geschaltet")
+            if self._aimo_active:
+                self._set_status("AIMO-Modus komplett scharf geschaltet")
         else:
             if self._aimo_active:
                 self._stop_aimo(restore=False)

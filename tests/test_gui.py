@@ -209,11 +209,14 @@ exit 0
                                   "kind": "kone"}, 0, window.select_device)
         window.devices_store.append(row)
         window.select_device(row)
+        # Der Master ist eine echte Radio-Auswahl zwischen Manuell und AIMO.
+        self.assertIsInstance(window.aimo_master, gui.Gtk.CheckButton)
+        self.assertTrue(window.manual_radio.get_active())
         # AIMO-Button ist sichtbar und klickbar.
         self.assertTrue(window.aimo_btn.get_sensitive())
         self.assertEqual(window.aimo_btn.get_label(), "AIMO an")
         # Ein Klick armiert den AIMO-Signatur-Modus (Wire: CLI-Args korrekt).
-        window.toggle_aimo()
+        window.aimo_btn.emit("clicked")
         aimo_args = window._aimo_cli_args()
         self.assertTrue(window._aimo_active)
         self.assertEqual(window.aimo_btn.get_label(), "AIMO aus")
@@ -225,22 +228,100 @@ exit 0
         # Master-Schalter sperrt alle anderen Bedienelemente inkl. Einzel-Button.
         window.aimo_master.set_active(True)
         window._set_controls()
+        self.assertFalse(window.manual_radio.get_active())
+        self.assertIsNone(window._effect_name)
         for widget in window._manual_widgets:
             self.assertFalse(widget.get_sensitive(), f"widget not locked: {widget}")
         self.assertFalse(window.aimo_btn.get_sensitive(),
                          "Radio-Master active: Einzel-Button darf nicht klickbar sein")
         self.assertTrue(window._aimo_active)
-        # Master wieder aus => AIMO stoppt, manuelle Bedienung + Button frei.
-        window.aimo_master.set_active(False)
-        window._on_aimo_master_changed()
+        # Master wieder aus über die manuelle Radio-Auswahl => Kontrolle frei.
+        window.manual_radio.set_active(True)
+        self.assertTrue(window.manual_radio.get_active())
+        self.assertFalse(window.aimo_master.get_active())
         self.assertFalse(window._aimo_active)
         for widget in window._manual_widgets:
             self.assertTrue(widget.get_sensitive(), f"widget not restored: {widget}")
         self.assertTrue(window.aimo_btn.get_sensitive())
         # Toggle-Auszweig des Buttons.
-        window.toggle_aimo()  # an
-        window.toggle_aimo()  # aus
+        window.aimo_btn.emit("clicked")  # an
+        window.aimo_btn.emit("clicked")  # aus
         self.assertFalse(window._aimo_active)
+
+    def test_master_start_failure_does_not_claim_active_or_lock_controls(self):
+        os.environ["ROCCAT_AIMO_CLI"] = "/nonexistent/roccat-aimo-cli"
+        self.addCleanup(os.environ.pop, "ROCCAT_AIMO_CLI", None)
+        app = gui.RoccatApp()
+        app.set_application_id("io.github.Goitonthefloor.roccat.test.aimo.failure")
+        app.register(None)
+        window = gui.RoccatGui(app)
+        self.addCleanup(window.close)
+        row = gui.RoccatDeviceRow({"index": 0, "vendor_id": 0x1E7D,
+                                  "product_id": 0x2E27, "name": "Kone AIMO",
+                                  "kind": "kone"}, 0, window.select_device)
+        window.devices_store.append(row)
+        window.select_device(row)
+
+        window.aimo_master.set_active(True)
+
+        self.assertFalse(window._aimo_active)
+        self.assertFalse(window.aimo_master.get_active())
+        self.assertTrue(window.aimo_btn.get_sensitive())
+        self.assertTrue(all(widget.get_sensitive() for widget in window._manual_widgets))
+        self.assertIn("AIMO error", window.status_label.get_label())
+
+    def test_master_starts_signature_without_pressing_single_button(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args_file = Path(directory) / "args"
+            cli = _script(Path(directory) / "cli", f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {args_file}\nsleep 3\n")
+            os.environ["ROCCAT_AIMO_CLI"] = cli
+            self.addCleanup(os.environ.pop, "ROCCAT_AIMO_CLI", None)
+            app = gui.RoccatApp()
+            app.set_application_id("io.github.Goitonthefloor.roccat.test.aimo.direct")
+            app.register(None)
+            window = gui.RoccatGui(app)
+            self.addCleanup(window.close)
+            row = gui.RoccatDeviceRow({"index": 0, "vendor_id": 0x1E7D,
+                                      "product_id": 0x2E27, "name": "Kone AIMO",
+                                      "kind": "kone"}, 0, window.select_device)
+            window.devices_store.append(row)
+            window.select_device(row)
+            window.aimo_master.set_active(True)
+            deadline = time.monotonic() + 2
+            while not args_file.exists() and time.monotonic() < deadline:
+                GLib.MainContext.default().iteration(False)
+                time.sleep(0.01)
+            self.assertTrue(window._aimo_active)
+            self.assertTrue(window.aimo_master.get_active())
+            self.assertEqual(args_file.read_text().splitlines(), window._aimo_cli_args())
+            self.assertFalse(window.aimo_btn.get_sensitive())
+            window.manual_radio.set_active(True)
+            self.assertFalse(window._aimo_active)
+
+    def test_master_unlocks_when_aimo_process_exits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            os.environ["ROCCAT_AIMO_CLI"] = _script(Path(directory) / "cli", "#!/bin/sh\necho 'device lost' >&2\nexit 1\n")
+            self.addCleanup(os.environ.pop, "ROCCAT_AIMO_CLI", None)
+            app = gui.RoccatApp()
+            app.set_application_id("io.github.Goitonthefloor.roccat.test.aimo.exit")
+            app.register(None)
+            window = gui.RoccatGui(app)
+            self.addCleanup(window.close)
+            row = gui.RoccatDeviceRow({"index": 0, "vendor_id": 0x1E7D,
+                                      "product_id": 0x2E27, "name": "Kone AIMO",
+                                      "kind": "kone"}, 0, window.select_device)
+            window.devices_store.append(row)
+            window.select_device(row)
+            window.aimo_master.set_active(True)
+            deadline = time.monotonic() + 2
+            while window._aimo_active and time.monotonic() < deadline:
+                GLib.MainContext.default().iteration(False)
+                time.sleep(0.01)
+            self.assertFalse(window._aimo_active)
+            self.assertFalse(window.aimo_master.get_active())
+            self.assertTrue(window.aimo_btn.get_sensitive())
+            self.assertTrue(all(widget.get_sensitive() for widget in window._manual_widgets))
+            self.assertIn("device lost", window.status_label.get_label())
 
     def test_cli_gui_command_stays_open(self):
         proc = subprocess.Popen(
