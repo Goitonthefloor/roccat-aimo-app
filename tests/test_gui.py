@@ -162,6 +162,32 @@ exit 0
         self.assertIn("hidapi", app.error_status)
         self.assertIn("not valid JSON", app.invalid_status)
 
+    def test_scan_failure_is_not_reported_as_offline_but_empty_scan_is(self):
+        app = gui.RoccatApp()
+        app.set_application_id("io.github.Goitonthefloor.roccat.test.scanstate")
+        app.register(None)
+        window = gui.RoccatGui(app)
+        self.addCleanup(window.close)
+        callbacks = []
+        window._run_command = lambda args, callback: callbacks.append(callback)
+
+        window.load_devices()
+        self.assertNotIn("Offline", window.connection_label.get_label())
+        callbacks.pop()(subprocess.CompletedProcess([], 1, "", "scan failed"))
+        self.assertIn("fehlgeschlagen", window.connection_label.get_label())
+        self.assertNotIn("Offline", window.overview_description.get_label())
+        self.assertNotIn("Keine Geräte gefunden", window.empty_hint.get_label())
+        self.assertIn("scan failed", window.status_label.get_label())
+        self.assertIsNone(window.selected_index)
+        self.assertFalse(window._actions.get_sensitive())
+
+        window.load_devices()
+        callbacks.pop()(subprocess.CompletedProcess([], 0, "[]", ""))
+        self.assertIn("Offline", window.connection_label.get_label())
+        self.assertIn("Offline", window.overview_description.get_label())
+        self.assertIn("Keine Geräte gefunden", window.empty_hint.get_label())
+        self.assertIn("keine ROCCAT-Geräte gefunden", window.status_label.get_label())
+
     def test_swarm_navigation_and_offline_state(self):
         app = gui.RoccatApp()
         app.set_application_id("io.github.Goitonthefloor.roccat.test.layout")

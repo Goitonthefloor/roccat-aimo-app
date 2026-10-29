@@ -845,17 +845,29 @@ class RoccatGui(Adw.ApplicationWindow):
         self.selected_index = None
         self._selected_kind = ""
         self._clear_rows()
-        self._show_offline()
+        self.connection_label.set_label("● Gerätesuche läuft …")
+        self.overview_device.set_label("Gerätestatus wird ermittelt")
+        self.overview_description.set_label("Gerätesuche läuft …")
+        self.device_title.set_label("Kein Gerät ausgewählt")
+        self.device_subtitle.set_label("Gerätesuche läuft …")
+        self.empty_hint.set_visible(False)
         self._set_controls()
         self._run_command(["list", "--json"], self._devices_loaded)
 
     def _devices_loaded(self, proc):
         devices, error = _load_bridge().parse_device_json(proc.stdout, proc.returncode, proc.stderr)
         if error:
+            self.connection_label.set_label("● Gerätesuche fehlgeschlagen")
+            self.overview_device.set_label("Gerätestatus unbekannt")
+            self.overview_description.set_label("Gerätesuche fehlgeschlagen · bitte erneut versuchen.")
+            self.device_subtitle.set_label("Gerätestatus unbekannt · bitte erneut suchen.")
+            self.empty_hint.set_label("Gerätesuche fehlgeschlagen · bitte erneut versuchen.")
             self.empty_hint.set_visible(True)
             self._set_status(f"Gerätesuche fehlgeschlagen: {error}")
             return
         if not devices:
+            self._show_offline()
+            self.empty_hint.set_label("Keine Geräte gefunden. Kone AIMO oder Vulcan AIMO anschließen; Offline-Vorschau ohne Hardware.")
             self.empty_hint.set_visible(True)
             self._set_status("Offline · keine ROCCAT-Geräte gefunden")
             return
