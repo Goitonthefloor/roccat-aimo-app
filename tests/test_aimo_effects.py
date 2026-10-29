@@ -93,6 +93,18 @@ def test_backend_for():
     assert n == 11 and not is_vulcan
 
 
+def test_cli_hue_and_saturation_reach_animated_renderers():
+    from roccat_aimo_bridge import build_parser
+    from aimo_effects import resolve_effect_params
+
+    parser = build_parser()
+    for effect in ("colorcycle", "wave"):
+        args = parser.parse_args(["aimo-effect", effect, "--hue", "120", "--sat", "0.5"])
+        params = resolve_effect_params(effect, args)
+        renderer = render_colorcycle if effect == "colorcycle" else render_wave
+        assert renderer(0.0, params, kone_position, 1) == [(128, 255, 128)]
+
+
 # --- Effekt-Liste -----------------------------------------------------------
 
 def test_effect_list():

@@ -265,12 +265,14 @@ def resolve_effect_params(effect: str, args) -> dict:
         p["max"] = args.max / 100.0
     elif effect == "colorcycle":
         p["hue"] = args.hue
-        p["sat"] = 1.0
+        p["sat"] = args.sat
         p["val"] = 1.0
     elif effect == "wave":
         p["mode"] = args.mode
         p["direction"] = args.direction
         p["spread"] = args.spread
+        p["sat"] = args.sat
+        p["hue"] = args.hue
         if args.mode == "gradient":
             p["stops"] = _parse_theme(args.theme)
     else:
