@@ -527,6 +527,17 @@ def _run_aimo_software_effect(args: argparse.Namespace, group: Dict[str, Any]) -
     return 0
 
 
+def _positive_finite_period(value: str) -> float:
+    message = "period must be a finite number greater than zero"
+    try:
+        period = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(message) from None
+    if not math.isfinite(period) or period <= 0:
+        raise argparse.ArgumentTypeError(message)
+    return period
+
+
 def _add_aimo_effect_subparsers(parent: argparse.ArgumentParser) -> None:
     """Side A's software-effect command surface: aimo-effect <effect> [...]."""
     esh = parent.add_subparsers(dest="effect", required=True)
@@ -535,7 +546,7 @@ def _add_aimo_effect_subparsers(parent: argparse.ArgumentParser) -> None:
         p.add_argument("--brightness", type=int, default=100, help="0..100 (AIMO software effects)")
         p.add_argument("--index", type=int, default=0)
         if animated:
-            p.add_argument("--period", type=float, default=2.0, help="Loop period in s")
+            p.add_argument("--period", type=_positive_finite_period, default=2.0, help="Loop period in s (finite and greater than 0)")
             p.add_argument("--duration", type=float, default=0.0, help="0 = run until Ctrl-C")
             p.add_argument("--frame-interval", type=float, default=0.05, help="s per frame")
 
