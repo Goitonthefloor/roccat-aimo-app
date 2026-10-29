@@ -118,6 +118,31 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(len(self.fake.created), 1)
         self.assertTrue(self.fake.created[0].closed)
 
+    def test_interrupted_open_closes_handle_and_propagates(self):
+        for entry, method in [
+            ({"path": b"001:002:01"}, "open_path"),
+            ({"vendor_id": 0x1E7D, "product_id": 0x2E27}, "open"),
+        ]:
+            with self.subTest(method=method):
+                dev = FakeDevice()
+                setattr(dev, method, mock.Mock(side_effect=KeyboardInterrupt))
+                with mock.patch.object(self.fake, "device", return_value=dev):
+                    with self.assertRaises(KeyboardInterrupt):
+                        bridge.open_device_by_entry(entry)
+                self.assertTrue(dev.closed)
+                getattr(dev, method).assert_called_once()
+
+    def test_stopping_effect_during_open_closes_handle_without_retry(self):
+        dev = FakeDevice()
+        dev.open_path = mock.Mock(side_effect=KeyboardInterrupt)
+        with mock.patch.object(self.fake, "device", return_value=dev), \
+             contextlib.redirect_stdout(io.StringIO()):
+            code = bridge.main(["effect", "pulse", "255", "0", "0", "--frames", "1"])
+        self.assertEqual(code, 0)
+        self.assertTrue(dev.closed)
+        dev.open_path.assert_called_once()
+        self.assertEqual(dev.features, [])
+
     def test_failed_open_by_ids_closes_device(self):
         self.fake.fail_open = True
         with self.assertRaisesRegex(OSError, "could not open HID device"):

@@ -183,6 +183,12 @@ def open_device_by_entry(entry: Dict[str, Any]) -> Any:
                 dev.close()
             except Exception:
                 pass
+        except BaseException:
+            try:
+                dev.close()
+            except Exception:
+                pass
+            raise
     if candidates:
         raise OSError("could not open the selected HID interface: " + "; ".join(errors)
                       + ". Install the host udev rules and reconnect the device.")
@@ -197,6 +203,12 @@ def open_device_by_entry(entry: Dict[str, Any]) -> Any:
         detail = "; ".join(errors)
         suffix = f" (path errors: {detail})" if detail else ""
         raise OSError(f"could not open HID device: {exc}{suffix}") from exc
+    except BaseException:
+        try:
+            dev.close()
+        except Exception:
+            pass
+        raise
     return dev
 
 
