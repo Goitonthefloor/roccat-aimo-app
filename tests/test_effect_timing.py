@@ -9,6 +9,26 @@ import aimo_effects
 
 
 class EffectTimingTests(unittest.TestCase):
+    def test_duration_shorter_than_frame_interval_does_not_send_late_frame(self):
+        clock = [0.0]
+        frames = []
+        sleeps = []
+
+        def sleep(delay):
+            sleeps.append(delay)
+            clock[0] += delay
+
+        with patch.object(aimo_effects.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(aimo_effects.time, "sleep", side_effect=sleep):
+            aimo_effects.run_effect(
+                {"product_id": 0x2E27}, None, "colorcycle",
+                {"hue": 0, "sat": 1, "val": 1}, period=1,
+                duration=0.1, frame_interval=10,
+                send=lambda _dev, colors, _brightness: frames.append(colors[0]),
+            )
+        self.assertEqual(frames, [(255, 0, 0)])
+        self.assertEqual(sleeps, [0.1])
+
     def test_duration_limited_animation_uses_elapsed_time_for_phase(self):
         clock = [0.0]
         frames = []
