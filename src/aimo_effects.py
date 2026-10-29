@@ -317,13 +317,9 @@ def run_effect(
     num_leds, pos, is_vulcan = backend_for(entry)
 
     t_start = time.monotonic()
-    frame = 0
     try:
         while True:
-            if duration > 0:
-                phase = ((frame * frame_interval) % period) / period
-            else:
-                phase = ((time.monotonic() - t_start) % period) / period
+            phase = ((time.monotonic() - t_start) % period) / period
 
             led_map = renderer(phase, params, pos, num_leds)
             led_map = scale_brightness(led_map, brightness)
@@ -336,7 +332,6 @@ def run_effect(
                 break
 
             time.sleep(frame_interval)
-            frame += 1
     except KeyboardInterrupt:
         return 0
     return 0
