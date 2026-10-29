@@ -109,6 +109,21 @@ class BridgeTests(unittest.TestCase):
         os.environ.pop("ROCCAT_AIMO_STATE", None)
         self.tmp.cleanup()
 
+    def test_aimo_effect_uses_single_device_scan_and_only_necessary_hid_handle(self):
+        self.fake.enumerate = mock.Mock(side_effect=[[kone_device()], []])
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = bridge.main(["aimo-effect", "static", "255", "0", "0"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.fake.enumerate.call_count, 1)
+        self.assertEqual(len(self.fake.created), 1)
+        self.assertTrue(self.fake.created[0].closed)
+
+    def test_failed_open_by_ids_closes_device(self):
+        self.fake.fail_open = True
+        with self.assertRaisesRegex(OSError, "could not open HID device"):
+            bridge.open_device_by_entry({"vendor_id": 0x1E7D, "product_id": 0x2E27})
+        self.assertTrue(self.fake.created[0].closed)
+
     def test_list_json_survives_bytes_paths_and_names_device(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):

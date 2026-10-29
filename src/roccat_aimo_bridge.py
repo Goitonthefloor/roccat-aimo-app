@@ -190,6 +190,10 @@ def open_device_by_entry(entry: Dict[str, Any]) -> Any:
     try:
         dev.open(int(entry["vendor_id"]), int(entry["product_id"]))
     except Exception as exc:
+        try:
+            dev.close()
+        except Exception:
+            pass
         detail = "; ".join(errors)
         suffix = f" (path errors: {detail})" if detail else ""
         raise OSError(f"could not open HID device: {exc}{suffix}") from exc
@@ -496,28 +500,18 @@ def _run_aimo_software_effect(args: argparse.Namespace, group: Dict[str, Any]) -
     except (ValueError, KeyError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-    entry = _pick_device(args.index)
-    if entry is None:
-        return 1
-    dev = open_device_by_entry(entry)
-    try:
-        run_effect(
-            entry,
-            dev,
-            args.effect,
-            params,
-            brightness=args.brightness,
-            period=getattr(args, "period", 2.0),
-            duration=getattr(args, "duration", 0.0),
-            frame_interval=getattr(args, "frame_interval", 0.05),
-            send=lambda _dev, led_map, _br: _send_led_map_for(group, led_map),
-        )
-        return 0
-    finally:
-        try:
-            dev.close()
-        except Exception:
-            pass
+    run_effect(
+        group,
+        None,
+        args.effect,
+        params,
+        brightness=args.brightness,
+        period=getattr(args, "period", 2.0),
+        duration=getattr(args, "duration", 0.0),
+        frame_interval=getattr(args, "frame_interval", 0.05),
+        send=lambda _dev, led_map, _br: _send_led_map_for(group, led_map),
+    )
+    return 0
 
 
 def _add_aimo_effect_subparsers(parent: argparse.ArgumentParser) -> None:
