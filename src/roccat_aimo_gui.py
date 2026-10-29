@@ -651,16 +651,13 @@ class RoccatGui(Adw.ApplicationWindow):
             self._busy = False
             if not self._closed:
                 self._set_controls()
-                if isinstance(result, Exception):
-                    self._set_status(str(result))
-                else:
-                    callback(result)
+                callback(result)
             return False
         def worker():
             try:
                 result = run_cli(args)
             except Exception as exc:
-                result = exc
+                result = subprocess.CompletedProcess(args, 1, "", str(exc))
             GLib.idle_add(done, result)
         threading.Thread(target=worker, daemon=True).start()
 

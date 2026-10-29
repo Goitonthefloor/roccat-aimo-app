@@ -162,6 +162,22 @@ exit 0
         self.assertIn("hidapi", app.error_status)
         self.assertIn("not valid JSON", app.invalid_status)
 
+    def test_missing_cli_finishes_scan_with_failure_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            os.environ["ROCCAT_AIMO_CLI"] = str(Path(directory) / "missing-cli")
+            self.addCleanup(os.environ.pop, "ROCCAT_AIMO_CLI", None)
+            app = gui.RoccatApp()
+            app.set_application_id("io.github.Goitonthefloor.roccat.test.missingcli")
+            app.register(None)
+            window = gui.RoccatGui(app)
+            self.addCleanup(window.close)
+            window.load_devices()
+            wait_idle(window)
+            self.assertIn("fehlgeschlagen", window.connection_label.get_label())
+            self.assertIn("missing-cli", window.status_label.get_label())
+            self.assertTrue(window.empty_hint.get_visible())
+            self.assertTrue(window.refresh_btn.get_sensitive())
+
     def test_scan_failure_is_not_reported_as_offline_but_empty_scan_is(self):
         app = gui.RoccatApp()
         app.set_application_id("io.github.Goitonthefloor.roccat.test.scanstate")
