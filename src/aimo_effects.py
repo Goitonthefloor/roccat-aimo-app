@@ -30,6 +30,7 @@ import time
 from typing import Callable, List, Optional, Sequence, Tuple
 
 from aimo_themes import RGB, gradient_color, theme_by_name
+import roccat_rgb
 
 # --- Geraete-LED-Abstraktion ----------------------------------------------
 
@@ -286,6 +287,8 @@ def backend_for(entry: dict) -> Tuple[int, Callable[[int], Tuple[float, float]],
     Kone AIMO: 0x2E27.
     """
     pid = entry.get("product_id")
+    if pid in (roccat_rgb.VULCAN_100_AIMO, roccat_rgb.VULCAN_120_AIMO):
+        return roccat_rgb.VULCAN_KEY_COUNT, vulcan_position, True
     if pid in (0x2E24, 0x2E26, 0x2E2A):
         return vulcan_num_leds(), vulcan_position, True
     return kone_num_leds(), kone_position, False

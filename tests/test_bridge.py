@@ -302,6 +302,22 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(report[2:5], [255, 0, 0])
         self.assertTrue(any(dev.closed for dev in self.fake.created))
 
+    def test_aimo_static_writes_vulcan_software_frame(self):
+        for pid in (roccat_rgb.VULCAN_100_AIMO, roccat_rgb.VULCAN_120_AIMO):
+            with self.subTest(product_id=pid):
+                self.fake.devices = [
+                    dict(kone_device(), product_id=pid, path=path, interface_number=interface)
+                    for path, interface in [(b"001:002:01", 1), (b"001:002:03", 3)]
+                ]
+                self.fake.created.clear()
+                bridge._vulcan_ready.clear()
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    code = bridge.main(["aimo-effect", "static", "255", "0", "0"])
+                self.assertEqual(code, 0, err.getvalue())
+                led = next(dev for dev in self.fake.created if dev.written)
+                self.assertEqual(len(led.written), 7)
+                self.assertEqual(led.written[0][5], 255)
+
     def test_effect_without_device_does_not_open_hid(self):
         self.fake.devices = []
         stderr = io.StringIO()
