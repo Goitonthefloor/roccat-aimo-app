@@ -193,6 +193,7 @@ class RoccatGui(Adw.ApplicationWindow):
         self.add_css_class("swarm-window")
         self._session_profiles: list[tuple[int, int, int, int, float, int, bool] | None] = [None] * 5
         self.selected_index = None
+        self._selected_row = None
         self._busy = False
         self._closed = False
         self._preview_colors = [(0, 0, 0)] * 144
@@ -840,6 +841,7 @@ class RoccatGui(Adw.ApplicationWindow):
         self.stop_effect(restore=False)
         self._stop_aimo(restore=False)
         self.selected_index = None
+        self._selected_row = None
         self._selected_kind = ""
         self._clear_rows()
         self.connection_label.set_label("● Gerätesuche läuft …")
@@ -887,8 +889,11 @@ class RoccatGui(Adw.ApplicationWindow):
             self.select_device(row)
 
     def select_device(self, row) -> None:
+        if row is self._selected_row:
+            return
         self.stop_effect(restore=False)
         self._stop_aimo(restore=False)
+        self._selected_row = row
         self.selected_index = row.index
         self.devices_store.select_row(row)
         self.empty_hint.set_visible(False)

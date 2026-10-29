@@ -269,6 +269,31 @@ exit 0
             self.assertTrue(any(line.startswith("rgb ") for line in lines))
             self.assertIsNotNone(window._session_profiles[0])
 
+    def test_reselecting_current_device_does_not_stop_effect(self):
+        with tempfile.TemporaryDirectory() as directory:
+            os.environ["ROCCAT_AIMO_CLI"] = _script(Path(directory) / "cli", "#!/bin/sh\nsleep 5\n")
+            self.addCleanup(os.environ.pop, "ROCCAT_AIMO_CLI", None)
+            app = gui.RoccatApp()
+            app.set_application_id("io.github.Goitonthefloor.roccat.test.reselect")
+            app.register(None)
+            window = gui.RoccatGui(app)
+            self.addCleanup(window.close)
+            row = gui.RoccatDeviceRow({"vendor_id": 0x1E7D, "product_id": 0x2E27}, 0, window.select_device)
+            window.devices_store.append(row)
+            window.select_device(row)
+            window.start_effect("pulse")
+            process = window._effect_proc
+            window.select_device(row)
+            self.assertEqual(window._effect_name, "pulse")
+            self.assertIs(window._effect_proc, process)
+            self.assertIsNone(process.poll())
+            other = gui.RoccatDeviceRow({"vendor_id": 0x1E7D, "product_id": 0x2E27}, 1, window.select_device)
+            window.devices_store.append(other)
+            window.select_device(other)
+            self.assertIsNone(window._effect_name)
+            self.assertIsNotNone(process.poll())
+            self.assertEqual(window.selected_index, 1)
+
     def test_unknown_device_shows_model_and_disables_rgb(self):
         app = gui.RoccatApp()
         app.set_application_id("io.github.Goitonthefloor.roccat.test.unknown")
