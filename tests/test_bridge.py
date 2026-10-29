@@ -396,6 +396,12 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(led.written[0][5 + 24], 255)
         self.assertTrue(all(len(packet) == 65 for packet in led.written))
 
+    def test_invalid_utf8_state_is_recovered_on_scan(self):
+        self.state.write_bytes(b"\xff")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(bridge.main(["list", "--json"]), 0)
+        self.assertEqual(json.loads(self.state.read_text())["devices"][0]["name"], "Kone AIMO")
+
     def test_corrupt_state_is_replaced(self):
         self.state.write_text("{not json")
         self.assertEqual(bridge.load_state(), {"devices": []})
@@ -473,6 +479,14 @@ class BridgeTests(unittest.TestCase):
         for payload in [[], {bridge._color_key(group): [["invalid", 0, 0]] * 11}]:
             bridge.save_state({"color_maps": payload})
             self.assertEqual(bridge._load_colors(group, 11), [(0, 0, 0)] * 11)
+
+    def test_rgb_recovers_from_malformed_color_maps(self):
+        bridge.save_state({"devices": [], "color_maps": "corrupt"})
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+            code = bridge.main(["rgb", "255", "0", "0", "--led", "0"])
+        self.assertEqual(code, 0, err.getvalue())
+        group = bridge.grouped_devices()[0]
+        self.assertEqual(bridge._load_colors(group, 11)[0], (255, 0, 0))
 
     def test_effect_hid_failure_has_no_traceback(self):
         self.fake.fail_write = True

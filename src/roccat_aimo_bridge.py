@@ -73,8 +73,8 @@ def load_state() -> Dict[str, Any]:
     if not path.exists():
         return {"devices": []}
     try:
-        data = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {"devices": []}
     if not isinstance(data, dict):
         return {"devices": []}
@@ -355,7 +355,8 @@ def _load_colors(group: Dict[str, Any], count: int) -> List[Tuple[int, int, int]
 
 def _save_colors(group: Dict[str, Any], colors: Sequence[Tuple[int, int, int]]) -> None:
     state = load_state()
-    maps = dict(state.get("color_maps") or {})
+    existing = state.get("color_maps")
+    maps = dict(existing) if isinstance(existing, dict) else {}
     maps[_color_key(group)] = [list(color) for color in colors]
     state["color_maps"] = maps
     save_state(state)
