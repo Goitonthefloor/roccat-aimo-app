@@ -481,6 +481,17 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("ERROR", err.getvalue())
         self.assertNotIn("Traceback", err.getvalue())
 
+    def test_negative_frame_limit_is_rejected_before_device_access(self):
+        stderr = io.StringIO()
+        with mock.patch.object(bridge, "_pick_device", return_value=None) as pick:
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as exc:
+                bridge.main(["effect", "pulse", "255", "0", "0", "--frames", "-1"])
+        pick.assert_not_called()
+        self.assertEqual(exc.exception.code, 2)
+        self.assertIn("--frames", stderr.getvalue())
+        self.assertIn("non-negative", stderr.getvalue())
+        self.assertEqual(self.fake.created, [])
+
     def test_invalid_effect_controls_rejected(self):
         for option, value in [("--speed", "nan"), ("--speed", "inf"), ("--bpm", "0")]:
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

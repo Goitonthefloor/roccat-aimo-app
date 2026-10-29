@@ -692,6 +692,13 @@ def handle_poll(args: argparse.Namespace) -> int:
     return _run_on_device(args.index, action)
 
 
+def nonnegative_frames(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("frames must be non-negative")
+    return number
+
+
 def finite_speed(value: str) -> float:
     number = float(value)
     if not math.isfinite(number) or not 0.25 <= number <= 4:
@@ -742,7 +749,7 @@ def build_parser() -> argparse.ArgumentParser:
     effect_p.add_argument("b", type=int)
     effect_p.add_argument("--brightness", type=int, default=255, help="Scale the color, 0-255")
     effect_p.add_argument("--speed", type=finite_speed, default=1.0, help="0.25 to 4")
-    effect_p.add_argument("--frames", type=int, default=0, help="Stop after this many frames; 0 runs until interrupted")
+    effect_p.add_argument("--frames", type=nonnegative_frames, default=0, help="Stop after this many frames; 0 runs until interrupted")
     effect_p.add_argument("--index", type=int, default=0, help="Zero-based device index from list")
     effect_p.add_argument("--bpm", type=beat_tempo, default=120, help="Beat tempo, 30–240 BPM (multiplied by speed)")
     effect_p.add_argument("--reverse", action="store_true", help="Reverse flow direction")
