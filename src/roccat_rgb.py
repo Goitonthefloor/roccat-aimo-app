@@ -182,6 +182,7 @@ def effect_colors(
         raise ValueError(f"Unknown effect {name}")
     if count < 1:
         raise ValueError("Effect needs at least one light")
+    brightness = clamp_channel(brightness)
     if name == "reactive":
         age = float("inf") if last_press is None else max(0, frame - last_press) / EFFECT_FPS
         amount = max(0.0, 1.0 - age * clamp_speed(speed))

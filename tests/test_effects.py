@@ -40,6 +40,16 @@ class EffectTests(unittest.TestCase):
         self.assertGreater(fading[0][0], 0)
         self.assertEqual(self.frame("reactive", 24, last_press=12), [(0, 0, 0)] * 144)
 
+    def test_brightness_is_clamped_before_animated_fades(self):
+        for effect, frame in (("reactive", 6), ("beat", 3)):
+            with self.subTest(effect=effect):
+                def render(brightness):
+                    return rgb.effect_colors(effect, 255, 80, 40, brightness,
+                                             frame, 11, bpm=60, last_press=0)
+                self.assertEqual(render(500), render(255))
+                self.assertEqual(render(-10), render(0))
+                self.assertNotEqual(render(255), [(0, 0, 0)] * 11)
+
     def test_input_ignores_release_repeat_and_sync(self):
         event = lambda kind, value: inputs.EVENT.pack(0, 0, kind, 30, value)
         for data in (event(1, 0), event(1, 2), event(0, 1)):
