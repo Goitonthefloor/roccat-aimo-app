@@ -235,7 +235,7 @@ def _parse_theme(stops_arg: Optional[str]) -> List[RGB]:
     if stops_arg is None:
         raise ValueError("Themen- oder Stopp-Liste fehlt (THEME).")
     s = stops_arg.strip()
-    if ";" in s:
+    if "," in s or ";" in s:
         stops = []
         for part in s.split(";"):
             part = part.strip()
