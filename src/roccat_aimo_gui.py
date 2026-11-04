@@ -188,7 +188,7 @@ class RoccatDeviceRow(Adw.ActionRow):
 
 class RoccatGui(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title="Roccat AIMO RGB")
+        super().__init__(application=app, title="Aimo Emulation")
         self.set_default_size(1100, 760)
         self.add_css_class("swarm-window")
         self._session_profiles: list[tuple[int, int, int, int, float, int, bool] | None] = [None] * 5
@@ -223,10 +223,10 @@ class RoccatGui(Adw.ApplicationWindow):
         window_toolbar.add_top_bar(self.header_bar)
         brand = Gtk.Box(spacing=18)
         brand.add_css_class("swarm-brand")
-        logo = Gtk.Label(label="ROCCAT  SWARM")
+        logo = Gtk.Label(label="AIMO EMULATION")
         logo.add_css_class("swarm-logo")
         brand.append(logo)
-        edition = Gtk.Label(label="AIMO · LINUX")
+        edition = Gtk.Label(label="LINUX")
         edition.add_css_class("swarm-accent")
         brand.append(edition)
         self.connection_label = Gtk.Label(label="● Offline · kein Gerät angeschlossen")
@@ -377,14 +377,14 @@ class RoccatGui(Adw.ApplicationWindow):
             aimo_mode.AIMO_SIGNATURE if aimo_mode is not None
             else ((255, 0, 0), (255, 80, 0), (230, 140, 0))
         )
-        aimo_group = Adw.PreferencesGroup(title="AIMO-Modus")
+        aimo_group = Adw.PreferencesGroup(title="Aimo-Emulation")
         aimo_group.set_description("Software-Annäherung · kein belegter Original-Algorithmus")
         self.aimo_btn = Gtk.Button()
         self.aimo_btn.add_css_class("pill")
         self.aimo_btn.set_hexpand(True)
-        aimo_btn_row = Adw.ActionRow(title="AIMO-Signatur aktivieren")
+        aimo_btn_row = Adw.ActionRow(title="Aimo-Emulation aktivieren")
         aimo_btn_row.set_activatable_widget(self.aimo_btn)
-        aimo_btn_row.set_subtitle("Schaltet den AIMO-Voll-Gradient mit einem Klick an/aus")
+        aimo_btn_row.set_subtitle("Schaltet den Emulation-Voll-Gradient mit einem Klick an/aus")
         aimo_btn_row.add_suffix(self.aimo_btn)
         aimo_group.add(aimo_btn_row)
         self.manual_radio = Gtk.CheckButton()
@@ -395,9 +395,9 @@ class RoccatGui(Adw.ApplicationWindow):
         aimo_group.add(manual_row)
         self.aimo_master = Gtk.CheckButton()
         self.aimo_master.set_group(self.manual_radio)
-        master_row = Adw.ActionRow(title="AIMO-Modus (komplett)")
+        master_row = Adw.ActionRow(title="Aimo-Emulation (komplett)")
         master_row.set_subtitle(
-            "Deaktiviert alle manuellen Bedienelemente und armiert den AIMO-Modus vollständig"
+            "Deaktiviert alle manuellen Bedienelemente und armiert die Aimo-Emulation vollständig"
         )
         master_row.add_suffix(self.aimo_master)
         master_row.set_activatable_widget(self.aimo_master)
@@ -405,7 +405,7 @@ class RoccatGui(Adw.ApplicationWindow):
         aimo_group.add(master_row)
         content.append(aimo_group)
 
-        self._aimo_btn_label = "AIMO an"
+        self._aimo_btn_label = "Emulation an"
         self.aimo_btn.connect("clicked", lambda _: self.toggle_aimo())
         self._rebuild_aimo_button()
 
@@ -474,7 +474,7 @@ class RoccatGui(Adw.ApplicationWindow):
         right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         right.add_css_class("swarm-panel")
         right.set_hexpand(True)
-        for heading, panel in (("// EFFEKTE & AIMO", left), ("// FARBE & VORSCHAU", right)):
+        for heading, panel in (("// EFFEKTE & EMULATION", left), ("// FARBE & VORSCHAU", right)):
             label = Gtk.Label(label=heading, xalign=0)
             label.add_css_class("swarm-eyebrow")
             panel.append(label)
@@ -542,7 +542,7 @@ class RoccatGui(Adw.ApplicationWindow):
         open_lighting.connect("clicked", lambda *_: self.lighting_tab.set_active(True))
         overview_card.append(open_lighting)
         overview.append(overview_card)
-        overview_note = Gtk.Label(label="AIMO · Farbe · Effekte   |   Unterstützt: Kone AIMO und Vulcan AIMO",
+        overview_note = Gtk.Label(label="Emulation · Farbe · Effekte   |   Unterstützt: Kone AIMO und Vulcan AIMO",
                                   xalign=0, wrap=True)
         overview_note.add_css_class("swarm-muted")
         overview.append(overview_note)
@@ -1152,7 +1152,7 @@ class RoccatGui(Adw.ApplicationWindow):
     def _rebuild_aimo_button(self) -> None:
         """Button-Beschriftung und visueller Zustand (aktiv = suggested-action)."""
         active = self._aimo_active
-        label = "AIMO aus" if active else "AIMO an"
+        label = "Emulation aus" if active else "Emulation an"
         self._aimo_btn_label = label
         if active:
             self.aimo_btn.add_css_class("suggested-action")
@@ -1160,7 +1160,7 @@ class RoccatGui(Adw.ApplicationWindow):
             self.aimo_btn.remove_css_class("suggested-action")
         self.aimo_btn.set_label(label)
         self.aimo_btn.set_tooltip_text(
-            "AIMO-Modus ausschalten" if active else "AIMO-Signatur-Look aktivieren"
+            "Aimo-Emulation ausschalten" if active else "Aimo-Emulation aktivieren"
         )
 
     def _stop_aimo(self, restore: bool = True) -> None:
@@ -1184,7 +1184,7 @@ class RoccatGui(Adw.ApplicationWindow):
             return
         if self._aimo_active:
             self._stop_aimo(restore=self.aimo_master.get_active())
-            self._set_status("AIMO-Modus aus")
+            self._set_status("Aimo-Emulation aus")
             return
         self.stop_effect(restore=False)
         self._aimo_active = True
@@ -1194,18 +1194,18 @@ class RoccatGui(Adw.ApplicationWindow):
         if not self._aimo_active:
             return
         self._aimo_source = GLib.timeout_add(84, self._aimo_tick)
-        self._set_status("AIMO-Modus aktiv")
+        self._set_status("Aimo-Emulation aktiv")
 
     def _on_aimo_master_changed(self) -> None:
         if self.aimo_master.get_active():
             if not self._aimo_active:
                 self.toggle_aimo()
             if self._aimo_active:
-                self._set_status("AIMO-Modus komplett scharf geschaltet")
+                self._set_status("Aimo-Emulation komplett scharf geschaltet")
         else:
             if self._aimo_active:
                 self._stop_aimo(restore=False)
-                self._set_status("AIMO-Modus aus")
+                self._set_status("Aimo-Emulation aus")
         self._set_controls()
 
     def _aimo_tick(self) -> bool:
@@ -1218,7 +1218,7 @@ class RoccatGui(Adw.ApplicationWindow):
         self.led_preview.queue_draw()
         self._aimo_frame += 1
         shown = "#%02X%02X%02X" % tuple(_clamp255(ch) for ch in colors[0])
-        self.preview_detail.set_label(f"AIMO-Modus · {shown}")
+        self.preview_detail.set_label(f"Aimo-Emulation · {shown}")
         if self._swatch_css is not None:
             self._swatch_css.load_from_string(".rgb-swatch { background-color: " + shown + "; }")
         return True
@@ -1236,7 +1236,7 @@ class RoccatGui(Adw.ApplicationWindow):
             )
         except Exception as exc:
             self._stop_aimo(restore=False)
-            self._set_status(f"AIMO error: {exc}")
+            self._set_status(f"Aimo-Emulation error: {exc}")
             return
         self._effect_proc = proc
         generation = self._effect_gen
@@ -1253,7 +1253,7 @@ class RoccatGui(Adw.ApplicationWindow):
             if not self._aimo_active:
                 return False
             self._stop_aimo(restore=False)
-            self._set_status(err or "AIMO-Modus beendet")
+            self._set_status(err or "Aimo-Emulation beendet")
             return False
 
         GLib.timeout_add(100, check_exit)

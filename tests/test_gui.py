@@ -346,12 +346,12 @@ exit 0
         self.assertTrue(window.manual_radio.get_active())
         # AIMO-Button ist sichtbar und klickbar.
         self.assertTrue(window.aimo_btn.get_sensitive())
-        self.assertEqual(window.aimo_btn.get_label(), "AIMO an")
+        self.assertEqual(window.aimo_btn.get_label(), "Emulation an")
         # Ein Klick armiert den AIMO-Signatur-Modus (Wire: CLI-Args korrekt).
         window.aimo_btn.emit("clicked")
         aimo_args = window._aimo_cli_args()
         self.assertTrue(window._aimo_active)
-        self.assertEqual(window.aimo_btn.get_label(), "AIMO aus")
+        self.assertEqual(window.aimo_btn.get_label(), "Emulation aus")
         self.assertEqual(aimo_args[0], "aimo-effect")
         self.assertEqual(aimo_args[1], "wave")
         self.assertIn("--theme", aimo_args)
@@ -400,7 +400,7 @@ exit 0
         self.assertFalse(window.aimo_master.get_active())
         self.assertTrue(window.aimo_btn.get_sensitive())
         self.assertTrue(all(widget.get_sensitive() for widget in window._manual_widgets))
-        self.assertIn("AIMO error", window.status_label.get_label())
+        self.assertIn("Aimo-Emulation error", window.status_label.get_label())
 
     def test_master_starts_signature_without_pressing_single_button(self):
         with tempfile.TemporaryDirectory() as directory:

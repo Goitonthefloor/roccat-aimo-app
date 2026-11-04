@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Roccat AIMO
+Name=Aimo Emulation
 Comment=Userspace bridge for Roccat Kone AIMO and Vulcan AIMO
 Exec=roccat-aimo-cli gui
 Icon=roccat-aimo
