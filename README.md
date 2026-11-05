@@ -123,6 +123,59 @@ automatisch erkannt. `--index` waehlt das Geraet (siehe `list`).
 
 ### GUI
 
+## Uninstall
+
+Removal depends on how the app was installed. No step below changes the last
+colour that reached the hardware: the device keeps whatever colour it showed when
+the app stopped, because the app stores nothing persistent on the device itself.
+Closing the window stops the effect worker; a running CLI effect stops with Ctrl+C.
+
+### Bazzite / Flatpak
+
+```bash
+flatpak uninstall --user io.github.Goitonthefloor.roccat.aimo
+flatpak uninstall --user org.flatpak.Builder          # only if nothing else needs it
+# udev rules installed with sudo by scripts/setup-bazzite.sh
+sudo rm -f /etc/udev/rules.d/70-roccat-aimo.rules
+sudo udevadm control --reload-rules
+# saved device state and Flatpak app data
+rm -rf ~/.local/state/roccat-aimo
+rm -rf ~/.var/app/io.github.Goitonthefloor.roccat.aimo
+```
+
+`flatpak uninstall --user --unused` also drops `org.gnome.Platform`, but that
+runtime is often shared with other Flatpak apps — check before using `--unused`.
+Uninstalling the app leaves the `flathub` remote in place.
+
+### Arch Linux
+
+```bash
+sudo pacman -Rns roccat-aimo-app
+rm -rf ~/.local/state/roccat-aimo
+```
+
+`-Rns` removes the package together with the udev rules it ships; no reboot is
+needed, a reload of the rules is enough for already open sessions.
+
+### Run from source
+
+Nothing is installed outside the checkout. Remove the udev rules and, if it was
+enabled, the optional user service:
+
+```bash
+systemctl --user disable --now roccat-aimo-bridge.service
+rm -f ~/.config/systemd/user/roccat-aimo-bridge.service
+systemctl --user daemon-reload
+sudo rm -f /etc/udev/rules.d/70-roccat-aimo.rules
+sudo udevadm control --reload-rules
+rm -rf roccat-aimo-app build-dir      # checkout and Builder output directory
+```
+
+The udev rules only grant access to the three supported product IDs; removing
+them does not affect other peripherals, and OpenRGB or Eruption keep working
+afterwards. If no Roccat AIMO device is left, deleting `~/.local/state/roccat-aimo`
+also discards the last known device list.
+
 ## Verification
 
 ```bash
